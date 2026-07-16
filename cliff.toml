@@ -1,0 +1,95 @@
+[changelog]
+header = """
+# Changelog
+
+"""
+body = """
+{% if version %}\
+	# [{{ version | trim_start_matches(pat="v") }}]\
+	{% if previous %}\
+		{% if previous.version %}\
+			(https://github.com/goliatone/go-messaging/compare/{{ previous.version }}...{{ version }})\
+		{% else %}\
+			(https://github.com/goliatone/go-messaging/tree/{{ version }})\
+		{% endif %}\
+	{% endif %} \
+	- ({{ timestamp | date(format="%Y-%m-%d") }})
+{% else %}\
+	# [unreleased]
+{% endif %}\
+{% if message %}\n
+{{ message | trim }}
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+	## {{ group | upper_first }}
+	{% for commit in commits | unique(attribute="message") %}
+		- {% if commit.scope %}\
+			**{{commit.scope}}:** \
+		  {% endif %}\
+		  {% if '```' in commit.message %}\
+		    {{ commit.message | upper_first }}\n\
+		    ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/goliatone/go-messaging/commit/{{ commit.id }}))  - ({{ commit.author.name }})\
+          {% else %}\
+			{{ commit.message | upper_first  }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/goliatone/go-messaging/commit/{{ commit.id }}))  - ({{ commit.author.name }})\
+          {% endif %}\
+		{% if commit.breaking %}\
+			{% for breakingChange in commit.footers %}\
+				\n{% raw %}  {% endraw %}- **{{ breakingChange.token }}{{ breakingChange.separator }}** {{ breakingChange.value }}\
+			{% endfor %}\
+		{% endif %}\
+	{% endfor %}
+{% endfor %}\n
+"""
+trim = true
+footer = """
+"""
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+protect_breaking_commits = false
+commit_preprocessors = [
+    { pattern = '\((\w+\s)?#([0-9]+)\)', replace = "([#${2}](https://github.com/goliatone/go-messaging/issues/${2}))"},
+    { pattern = "Merge pull request #([0-9]+) from [^ ]+", replace = "PR [#${1}](https://github.com/goliatone/go-messaging/pull/${1}):"},
+]
+commit_parsers = [
+    { message = "(?i)^feat", group = "<!-- 0 -->🚀 Features"},
+    { message = "(?i)^fix", group = "<!-- 1 -->🐛 Bug Fixes"},
+    { message = "(?i)^refactor", group = "<!-- 2 -->🚜 Refactor"},
+    { message = "(?i)^doc", group = "<!-- 3 -->📚 Documentation"},
+    { message = "(?i)^perf", group = "<!-- 4 -->⚡ Performance"},
+    { message = "(?i)^style", group = "<!-- 5 -->🎨 Styling"},
+    { message = "(?i)^test", group = "<!-- 6 -->🧪 Testing"},
+    { message = "(?i)^chore", group = "<!-- 7 -->⚙️ Miscellaneous Tasks"},
+    { body = ".*security", group = "<!-- 8 -->🛡️ Security"},
+    { message = "(?i)^upgrade", group = "<!-- 9 -->⬆️ Upgrades"},
+    { message = "(?i)^downgrade", group = "<!-- 10 -->⬇️ Downgrades"},
+    { message = "(?i)^revert", group = "<!-- 11 -->⏪ Reverts"},
+    { message = "(?i)^release", group = "<!-- 12 -->🔖 Releases"},
+    { message = "(?i)^bump", group = "<!-- 13 -->📦 Bumps"},
+    { message = "(?i)^initial", group = "<!-- 14 -->🎉 Initial Commit"},
+    { message = "(?i)^init", group = "<!-- 15 -->🎉 Initial Commit"},
+    { message = "(?i)^add", group = "<!-- 16 -->➕ Add"},
+    { message = "(?i)^create", group = "<!-- 16 -->➕ Add"},
+    { message = "(?i)^remove", group = "<!-- 17 -->➖ Remove"},
+    { message = "(?i)^delete", group = "<!-- 17 -->➖ Remove"},
+    { message = "(?i)^rename", group = "<!-- 18 -->📝 Rename"},
+    { message = "(?i)^move", group = "<!-- 19 -->📂 Move"},
+    { message = "(?i)^copy", group = "<!-- 20 -->📋 Copy"},
+    { message = "(?i)^fixup", group = "<!-- 21 -->🔧 Fixup"},
+    { message = "(?i)^wip", group = "<!-- 22 -->🚧 WIP"},
+    { message = "(?i)^rework", group = "<!-- 23 -->🔨 Rework"},
+    { message = "(?i)^cleanup", group = "<!-- 24 -->🧹 Cleanup"},
+    { message = "(?i)^format", group = "<!-- 25 -->🎨 Format"},
+    { message = "(?i)^style", group = "<!-- 25 -->🎨 Format"},
+    { message = "(?i)^lint", group = "<!-- 25 -->🎨 Format"},
+    { message = "(?i)^update", group = "<!-- 26 -->🔄 Update"},
+    { message = "(?i)^pin", group = "<!-- 27 -->📌 Pin"},
+    { message = "(?i)^unpin", group = "<!-- 28 -->📍 Unpin"},
+    { message = "(?i)^build|ci", group = "<!-- 29 -->👷 CI/CD"},
+    { message = ".*", group = "<!-- 30 -->📝 Other"},
+    { message = "(?i)^merge", group = "<!-- 31 -->🔀 Merges"},
+]
+tag_pattern = "v[0-9]*"
+topo_order = false
+sort_commits = "newest"
