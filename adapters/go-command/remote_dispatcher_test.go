@@ -2,6 +2,7 @@ package commandadapter
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
@@ -79,6 +80,104 @@ func TestRemoteDispatcherWaitsForCorrelatedWorkerQueryResult(t *testing.T) {
 	}
 	if outcome.Result != "found:42" || !outcome.ResultPresent || correlations.Pending() != 0 {
 		t.Fatalf("outcome=%#v pending=%d", outcome, correlations.Pending())
+	}
+}
+
+func TestRemoteDispatcherPreservesNestedDispatchLineage(t *testing.T) {
+	registration := ingressRegistration{
+		id: "test.create", messageType: "test.create", kind: command.HandlerKindCommand,
+		request: reflect.TypeFor[createMessage](), newMessage: func() any { return &createMessage{} },
+	}
+	provider, err := command.NewMessageRegistrationIndex(registration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalogCodec, err := NewJSONCatalogCodec(provider, JSONTypedCodec{}, CatalogBinding{
+		CatalogID: "create", RegistrationID: registration.ID(), Kind: registration.Kind(), SchemaVersion: "1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name                string
+		catalog             bool
+		explicitCorrelation string
+		wantCorrelation     string
+	}{
+		{name: "typed inherits correlation", wantCorrelation: "correlation-ingress"},
+		{name: "catalog inherits correlation", catalog: true, wantCorrelation: "correlation-ingress"},
+		{name: "typed explicit correlation wins", explicitCorrelation: "correlation-explicit", wantCorrelation: "correlation-explicit"},
+		{name: "catalog explicit correlation wins", catalog: true, explicitCorrelation: "correlation-explicit", wantCorrelation: "correlation-explicit"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			driver := newRemoteTestDriver()
+			correlations := newTestCorrelationRegistry(t, 1)
+			var remote *RemoteDispatcher
+			driver.publish = func(_ context.Context, _ messaging.Destination, request messaging.Envelope) (messaging.PublishResult, error) {
+				if request.CorrelationID != test.wantCorrelation || request.CausationID != "delivery-ingress" {
+					t.Fatalf("request lineage correlation=%q causation=%q", request.CorrelationID, request.CausationID)
+				}
+				if test.catalog {
+					if request.Type != CatalogEnvelopeType {
+						t.Fatalf("request type = %q", request.Type)
+					}
+					var dto CatalogDispatchDTO
+					if unmarshalErr := json.Unmarshal(request.Payload, &dto); unmarshalErr != nil {
+						t.Fatal(unmarshalErr)
+					}
+					if dto.Options.CorrelationID != test.wantCorrelation {
+						t.Fatalf("catalog correlation = %q", dto.Options.CorrelationID)
+					}
+				} else if request.Type != registration.MessageType() {
+					t.Fatalf("request type = %q", request.Type)
+				}
+				outcome := command.DispatchOutcome{Receipt: command.DispatchReceipt{
+					Accepted: true, Mode: command.ExecutionModeInline,
+					CommandID: registration.ID(), CorrelationID: request.CorrelationID,
+				}}
+				payload, encodeErr := (JSONReplyCodec{}).Encode(context.Background(), registration, outcome, nil)
+				if encodeErr != nil {
+					t.Fatal(encodeErr)
+				}
+				reply := messaging.NewEnvelope("reply-lineage", request.Type, messaging.KindReply, "1", (JSONReplyCodec{}).ContentType(), payload, nil)
+				reply.CorrelationID = request.CorrelationID
+				if got := remote.HandleReply(context.Background(), messaging.NewDelivery(reply, messaging.DeliveryInfo{})); got.Disposition != messaging.DispositionComplete {
+					t.Fatalf("reply disposition %#v", got)
+				}
+				return messaging.PublishResult{Outcome: messaging.PublishAccepted}, nil
+			}
+			config := RemoteDispatcherConfig{
+				Router: remoteTestRouter(t, driver, false), Correlations: correlations, ReplyRoute: "reply",
+			}
+			if test.catalog {
+				config.CatalogCodec = catalogCodec
+				config.UseCatalog = func(command.MessageRegistration) bool { return true }
+			}
+			remote = newTestRemoteDispatcher(t, config)
+			ctx := command.ContextWithDispatchProvenance(context.Background(), command.DispatchProvenance{
+				DeliveryID: "delivery-ingress", CorrelationID: "correlation-ingress", CausationID: "cause-before-ingress",
+			})
+			_, dispatchErr := remote.DispatchRemote(
+				ctx, command.DispatchRoute{Target: command.DispatchTargetRemote, Name: "request"},
+				registration, createMessage{Name: "Ada"}, command.DispatchOptions{
+					Mode: command.ExecutionModeInline, CorrelationID: test.explicitCorrelation,
+				},
+			)
+			if dispatchErr != nil {
+				t.Fatal(dispatchErr)
+			}
+		})
+	}
+}
+
+func TestOutboundLineageFallsBackToKnownCausation(t *testing.T) {
+	ctx := command.ContextWithDispatchProvenance(context.Background(), command.DispatchProvenance{
+		CorrelationID: " correlation ", CausationID: " earlier-cause ",
+	})
+	lineage := outboundLineageFromContext(ctx)
+	if lineage.correlationID != "correlation" || lineage.causationID != "earlier-cause" {
+		t.Fatalf("lineage = %#v", lineage)
 	}
 }
 

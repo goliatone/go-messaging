@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -122,5 +123,49 @@ func TestMonitorMessagingCancellationIsClean(t *testing.T) {
 	cancel()
 	if err := monitorMessaging(ctx, make(chan error), nil); err != nil {
 		t.Fatalf("canceled monitor returned %v", err)
+	}
+}
+
+func TestMonitorMessagingContinuesAfterPerMessageErrors(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	driverErrors := make(chan error)
+	subscriptionErrors := make(chan error, 2)
+	diagnostics := make(chan error, 2)
+	result := make(chan error, 1)
+	go func() {
+		result <- monitorMessaging(ctx, driverErrors, []messaging.Subscription{
+			&monitoredSubscription{errors: subscriptionErrors},
+		}, func(err error) { diagnostics <- err })
+	}()
+	subscriptionErrors <- messaging.NewMessageError(messaging.ErrInvalidEnvelope)
+	subscriptionErrors <- messaging.NewMessageError(errors.New("handler rejected message"))
+	for range 2 {
+		select {
+		case <-diagnostics:
+		case <-time.After(time.Second):
+			t.Fatal("recoverable message error was not reported")
+		}
+	}
+	select {
+	case err := <-result:
+		t.Fatalf("monitor stopped after recoverable error: %v", err)
+	default:
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("monitor cancellation returned %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("monitor did not stop after cancellation")
+	}
+}
+
+func TestDiagnosticWriterDoesNotExposeMessageErrorCause(t *testing.T) {
+	var output bytes.Buffer
+	diagnosticWriter(&output)(messaging.NewMessageError(errors.New("payload=secret")))
+	if output.String() != messageRejectedMessage+"\n" || strings.Contains(output.String(), "secret") {
+		t.Fatalf("diagnostic output = %q", output.String())
 	}
 }

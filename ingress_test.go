@@ -15,9 +15,11 @@ func (*subscriptionStub) Close(context.Context) error { return nil }
 type consumeStub struct {
 	stubDriver
 	handler Handler
+	calls   int
 }
 
 func (d *consumeStub) Subscribe(_ context.Context, _ Source, handler Handler) (Subscription, error) {
+	d.calls++
 	d.handler = handler
 	ready := make(chan struct{})
 	close(ready)
@@ -74,6 +76,54 @@ func TestIngressRejectsInvalidWirePolicyAtStartup(t *testing.T) {
 	}})
 	if !errors.Is(err, ErrInvalidEnvelope) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestIngressRejectsNilHandlersBeforeSubscribing(t *testing.T) {
+	driver := &consumeStub{}
+	registry, err := NewDriverRegistry(map[string]Driver{"consumer": driver})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = NewIngress(registry, []IngressBinding{{
+		Name: "invalid", LogicalRoute: "invalid", Driver: "consumer", Source: Source{Name: "invalid"},
+		Handlers: []Handler{nil},
+	}})
+	if !errors.Is(err, ErrUnknownRoute) || driver.calls != 0 {
+		t.Fatalf("err=%v subscribe calls=%d", err, driver.calls)
+	}
+}
+
+func TestIngressRejectsDuplicateAndNonCanonicalFilters(t *testing.T) {
+	driver := &consumeStub{}
+	registry, err := NewDriverRegistry(map[string]Driver{"consumer": driver})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := func(context.Context, Delivery) HandleResult { return Complete() }
+	tests := []struct {
+		name    string
+		binding IngressBinding
+	}{
+		{name: "duplicate kinds", binding: IngressBinding{AcceptedKinds: []Kind{KindEvent, KindEvent}}},
+		{name: "duplicate types", binding: IngressBinding{AcceptedTypes: []string{"event.created", "event.created"}}},
+		{name: "non canonical type", binding: IngressBinding{AcceptedTypes: []string{" event.created "}}},
+		{name: "duplicate content types", binding: IngressBinding{AcceptedContentTypes: []string{"application/json", "application/json"}}},
+		{name: "duplicate schemas", binding: IngressBinding{AcceptedSchemas: []string{"1", "1"}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			binding := test.binding
+			binding.Name = "invalid"
+			binding.LogicalRoute = "invalid"
+			binding.Driver = "consumer"
+			binding.Source = Source{Name: "invalid"}
+			binding.Handlers = []Handler{handler}
+			_, ingressErr := NewIngress(registry, []IngressBinding{binding})
+			if !errors.Is(ingressErr, ErrInvalidEnvelope) || driver.calls != 0 {
+				t.Fatalf("err=%v subscribe calls=%d", ingressErr, driver.calls)
+			}
+		})
 	}
 }
 

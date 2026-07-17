@@ -54,6 +54,14 @@ func TestObservationTransportErrorNormalizesUnknownClass(t *testing.T) {
 	}
 }
 
+func TestMessageErrorClassifiesRecoverableConsumptionFailureWithoutExposingCause(t *testing.T) {
+	cause := errors.New("payload=secret")
+	err := NewMessageError(cause)
+	if !IsMessageError(err) || !errors.Is(err, cause) || err.Error() != ErrMessageHandling.Error() {
+		t.Fatalf("message error = %v", err)
+	}
+}
+
 func TestDispositionConstructors(t *testing.T) {
 	err := errors.New("try again")
 	got := Retry(err, time.Second)

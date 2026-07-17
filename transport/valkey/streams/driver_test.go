@@ -350,6 +350,46 @@ func TestMalformedEntryIsDeadLetteredAndAcknowledged(t *testing.T) {
 	})
 }
 
+func TestInvalidIngressHandlerCannotConsumeDurableEntry(t *testing.T) {
+	address := requireValkeyAddress(t)
+	config := DefaultConfig(address)
+	driver, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if startErr := driver.Start(ctx); startErr != nil {
+		t.Fatal(startErr)
+	}
+	cleanupDriver(t, driver)
+	name := "invalid-ingress-" + time.Now().Format("150405.000000000")
+	envelope := messaging.NewEnvelope("invalid-ingress-1", "job", messaging.KindEvent, "1", "application/json", []byte(`{}`), nil)
+	if _, publishErr := driver.Publish(ctx, messaging.Destination{Name: name}, envelope); publishErr != nil {
+		t.Fatal(publishErr)
+	}
+	registry, err := messaging.NewDriverRegistry(map[string]messaging.Driver{"streams": driver})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = messaging.NewIngress(registry, []messaging.IngressBinding{{
+		Name: "invalid", LogicalRoute: "jobs", Driver: "streams",
+		Source:   messaging.Source{Name: name, Group: "workers", Consumer: "one", From: "0"},
+		Handlers: []messaging.Handler{nil},
+	}})
+	if !errors.Is(err, messaging.ErrUnknownRoute) {
+		t.Fatalf("NewIngress() error = %v", err)
+	}
+	client := newTestClient(t, address)
+	length, err := client.Do(ctx, client.B().Xlen().Key(name).Build()).AsInt64()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if length != 1 {
+		t.Fatalf("stream length = %d, want durable entry untouched", length)
+	}
+}
+
 func TestPendingOwnershipRecoversToAnotherConsumer(t *testing.T) {
 	address := requireValkeyAddress(t)
 	config := DefaultConfig(address)

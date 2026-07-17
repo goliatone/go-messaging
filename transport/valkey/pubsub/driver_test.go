@@ -134,7 +134,7 @@ func TestOversizedRawPubSubFrameIsRejectedBeforeDecode(t *testing.T) {
 	}
 	select {
 	case reported := <-subscription.Errors():
-		if !errors.Is(reported, messaging.ErrMessageTooLarge) {
+		if !messaging.IsMessageError(reported) || !errors.Is(reported, messaging.ErrMessageTooLarge) {
 			t.Fatalf("reported %v", reported)
 		}
 	case <-ctx.Done():
