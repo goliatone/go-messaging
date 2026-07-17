@@ -177,7 +177,6 @@ func (s *ChatServer) Serve(ctx context.Context) (runErr error) {
 		cancelRun()
 		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), s.config.ShutdownTimeout)
 		defer cancelShutdown()
-		runErr = errors.Join(runErr, s.shutdown(shutdownCtx))
 		if monitorDone != nil {
 			select {
 			case <-monitorDone:
@@ -185,6 +184,7 @@ func (s *ChatServer) Serve(ctx context.Context) (runErr error) {
 				runErr = errors.Join(runErr, safeError(shutdownFailedMessage, shutdownCtx.Err()))
 			}
 		}
+		runErr = errors.Join(runErr, s.shutdown(shutdownCtx))
 	}()
 	if err := s.broker.Start(runCtx); err != nil {
 		return err

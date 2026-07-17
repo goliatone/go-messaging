@@ -145,6 +145,32 @@ func waitForSubscriptions(ctx context.Context, subscriptions []messaging.Subscri
 func monitorMessaging(ctx context.Context, driverErrors <-chan error, subscriptions []messaging.Subscription) error {
 	monitorCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	sources := messagingErrorSources(driverErrors, subscriptions)
+	if len(sources) == 0 {
+		<-monitorCtx.Done()
+		return contextCompletion(monitorCtx)
+	}
+
+	errorsOut, allClosed := forwardMessagingErrors(monitorCtx, sources)
+	select {
+	case err := <-errorsOut:
+		return safeError(subscriptionFailedMessage, err)
+	case <-allClosed:
+		if monitorCtx.Err() != nil {
+			return contextCompletion(monitorCtx)
+		}
+		select {
+		case err := <-errorsOut:
+			return safeError(subscriptionFailedMessage, err)
+		default:
+		}
+		return safeError(subscriptionFailedMessage, errors.New("messaging error channels closed"))
+	case <-monitorCtx.Done():
+		return contextCompletion(monitorCtx)
+	}
+}
+
+func messagingErrorSources(driverErrors <-chan error, subscriptions []messaging.Subscription) []<-chan error {
 	sources := make([]<-chan error, 0, len(subscriptions)+1)
 	if driverErrors != nil {
 		sources = append(sources, driverErrors)
@@ -154,67 +180,52 @@ func monitorMessaging(ctx context.Context, driverErrors <-chan error, subscripti
 			sources = append(sources, source)
 		}
 	}
-	if len(sources) == 0 {
-		<-monitorCtx.Done()
-		if errors.Is(monitorCtx.Err(), context.Canceled) {
-			return nil
-		}
-		return monitorCtx.Err()
-	}
+	return sources
+}
 
+func forwardMessagingErrors(ctx context.Context, sources []<-chan error) (<-chan error, <-chan struct{}) {
 	errorsOut := make(chan error, len(sources))
+	allClosed := make(chan struct{})
 	var forwarders sync.WaitGroup
-	forward := func(source <-chan error) {
-		defer forwarders.Done()
-		for {
-			select {
-			case err, ok := <-source:
-				if !ok {
-					return
-				}
-				if err != nil {
-					select {
-					case errorsOut <- err:
-					case <-monitorCtx.Done():
-					}
-					return
-				}
-			case <-monitorCtx.Done():
-				return
-			}
-		}
-	}
 	forwarders.Add(len(sources))
 	for _, source := range sources {
-		go forward(source)
+		go func() {
+			defer forwarders.Done()
+			forwardMessagingError(ctx, source, errorsOut)
+		}()
 	}
-	allClosed := make(chan struct{})
 	go func() {
 		forwarders.Wait()
 		close(allClosed)
 	}()
-	select {
-	case err := <-errorsOut:
-		return safeError(subscriptionFailedMessage, err)
-	case <-allClosed:
-		if err := monitorCtx.Err(); err != nil {
-			if errors.Is(err, context.Canceled) {
-				return nil
-			}
-			return err
-		}
+	return errorsOut, allClosed
+}
+
+func forwardMessagingError(ctx context.Context, source <-chan error, errorsOut chan<- error) {
+	for {
 		select {
-		case err := <-errorsOut:
-			return safeError(subscriptionFailedMessage, err)
-		default:
+		case err, ok := <-source:
+			if !ok {
+				return
+			}
+			if err != nil {
+				select {
+				case errorsOut <- err:
+				case <-ctx.Done():
+				}
+				return
+			}
+		case <-ctx.Done():
+			return
 		}
-		return safeError(subscriptionFailedMessage, errors.New("messaging error channels closed"))
-	case <-monitorCtx.Done():
-		if errors.Is(monitorCtx.Err(), context.Canceled) {
-			return nil
-		}
-		return monitorCtx.Err()
 	}
+}
+
+func contextCompletion(ctx context.Context) error {
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return nil
+	}
+	return ctx.Err()
 }
 
 func closeSubscriptions(subscriptions []messaging.Subscription) error {

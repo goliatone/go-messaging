@@ -1,0 +1,8 @@
+go 1.26.0
+
+use (
+	.
+	./adapters/go-command
+	./examples/chat-demo
+	./transport/valkey
+)

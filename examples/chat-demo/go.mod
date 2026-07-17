@@ -3,7 +3,7 @@ module github.com/goliatone/go-messaging/examples/chat-demo
 go 1.26.0
 
 require (
-	github.com/goliatone/go-messaging v0.0.0
+	github.com/goliatone/go-messaging v0.0.0-20260717054047-0bb0a9faa369
 	github.com/goliatone/go-messaging/transport/valkey v0.0.0-20260717054047-0bb0a9faa369
 	github.com/goliatone/go-router v0.59.0
 	github.com/gorilla/websocket v1.5.1
@@ -48,6 +48,8 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+exclude github.com/goliatone/go-messaging v0.0.0
 
 replace github.com/goliatone/go-messaging => ../..
 

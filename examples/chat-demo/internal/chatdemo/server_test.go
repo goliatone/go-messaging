@@ -55,6 +55,11 @@ func TestHealthAndEmbeddedStaticRoutes(t *testing.T) {
 	if asset.Code != http.StatusOK {
 		t.Fatalf("asset status %d: %s", asset.Code, asset.Body.String())
 	}
+	storageAsset := httptest.NewRecorder()
+	server.handler.ServeHTTP(storageAsset, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/assets/storage.js", nil))
+	if storageAsset.Code != http.StatusOK {
+		t.Fatalf("storage asset status %d: %s", storageAsset.Code, storageAsset.Body.String())
+	}
 }
 
 func TestServerRejectsWildcardOrigin(t *testing.T) {
@@ -96,15 +101,13 @@ func TestWebSocketReturnsBoundedErrorsForMalformedAndUnsupportedFrames(t *testin
 	httpServer := httptest.NewServer(server.handler)
 	t.Cleanup(httpServer.Close)
 
-	wsURL := "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/ws/chat"
-	conn, response, err := websocket.DefaultDialer.Dial(wsURL, http.Header{"Origin": []string{origin}})
-	if err != nil {
-		if response != nil {
-			t.Fatalf("dial WebSocket: %v (status %s)", err, response.Status)
+	address := strings.TrimPrefix(httpServer.URL, "http://")
+	conn := dialChatWebSocket(t, t.Context(), address, origin)
+	t.Cleanup(func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			t.Logf("close protocol WebSocket: %v", closeErr)
 		}
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = conn.Close() })
+	})
 	waitForWebSocketEvents(t, conn, EventReady)
 
 	if err := conn.WriteMessage(websocket.TextMessage, []byte(`{`)); err != nil {
@@ -159,6 +162,12 @@ func TestShutdownBoundsSlowWebSocketHub(t *testing.T) {
 		t.Fatal(err)
 	}
 	server.http = &testHTTPServer{}
+	closeActualHub := server.closeHub
+	t.Cleanup(func() {
+		if closeErr := closeActualHub(); closeErr != nil {
+			t.Logf("close test WebSocket hub: %v", closeErr)
+		}
+	})
 	release := make(chan struct{})
 	server.closeHub = func() error {
 		<-release

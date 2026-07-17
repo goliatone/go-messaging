@@ -24,7 +24,7 @@
     connectionDot: document.querySelector("#connection-dot"),
   };
 
-  const storedSender = window.localStorage.getItem("chat-demo.sender");
+  const storedSender = window.ChatDemoStorage.read(window, "chat-demo.sender");
   if (storedSender) elements.sender.value = storedSender;
 
   function websocketURL() {
@@ -178,7 +178,7 @@
       feedback("Add your name and a message first.", "error");
       return;
     }
-    window.localStorage.setItem("chat-demo.sender", sender);
+    window.ChatDemoStorage.write(window, "chat-demo.sender", sender);
     state.socket.send(JSON.stringify({ type: "chat.send", data: { sender, text } }));
     elements.message.value = "";
     elements.message.focus();
