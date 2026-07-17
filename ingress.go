@@ -94,6 +94,11 @@ func (i *Ingress) ReplaceBindings(bindings []IngressBinding) error {
 		if len(binding.Handlers) == 0 {
 			return fmt.Errorf("%w: ingress binding %q requires a handler", ErrUnknownRoute, binding.Name)
 		}
+		for _, handler := range binding.Handlers {
+			if handler == nil {
+				return fmt.Errorf("%w: ingress binding %q contains a nil handler", ErrUnknownRoute, binding.Name)
+			}
+		}
 		if err := validateIngressPolicy(binding); err != nil {
 			return err
 		}
@@ -118,20 +123,20 @@ func (i *Ingress) ReplaceBindings(bindings []IngressBinding) error {
 }
 
 func validateIngressPolicy(binding IngressBinding) error {
-	for _, kind := range binding.AcceptedKinds {
-		switch kind {
-		case KindCommand, KindQuery, KindEvent, KindReply:
-		default:
-			return fmt.Errorf("%w: ingress binding %q has invalid kind %q", ErrInvalidEnvelope, binding.Name, kind)
-		}
+	owner := fmt.Sprintf("ingress binding %q", binding.Name)
+	if err := validateKindFilter(owner, binding.AcceptedKinds); err != nil {
+		return err
 	}
-	for label, values := range map[string][]string{
-		"type": binding.AcceptedTypes, "content type": binding.AcceptedContentTypes, "schema": binding.AcceptedSchemas,
+	for _, filter := range []struct {
+		label  string
+		values []string
+	}{
+		{label: "type", values: binding.AcceptedTypes},
+		{label: "content type", values: binding.AcceptedContentTypes},
+		{label: "schema", values: binding.AcceptedSchemas},
 	} {
-		for _, value := range values {
-			if strings.TrimSpace(value) == "" {
-				return fmt.Errorf("%w: ingress binding %q has an empty accepted %s", ErrInvalidEnvelope, binding.Name, label)
-			}
+		if err := validateStringFilter(owner, filter.label, filter.values); err != nil {
+			return err
 		}
 	}
 	return nil

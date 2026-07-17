@@ -215,14 +215,14 @@ func (s *subscription) run() {
 	})
 	err := s.client.Receive(receiveCtx, s.client.B().Subscribe().Channel(s.source.Name).Build(), func(message valkey.PubSubMessage) {
 		if len(message.Message) > s.driver.config.Valkey.MaxMessageBytes {
-			s.report(messaging.ErrMessageTooLarge)
+			s.report(messaging.NewMessageError(messaging.ErrMessageTooLarge))
 			return
 		}
 		item := inboundMessage{channel: message.Channel, data: []byte(message.Message)}
 		select {
 		case s.inbound <- item:
 		default:
-			s.report(fmt.Errorf("valkey pubsub: intake queue full"))
+			s.report(messaging.NewMessageError(errors.New("valkey pubsub: intake queue full")))
 		}
 	})
 	close(s.inbound)
@@ -239,15 +239,15 @@ func (s *subscription) process() {
 	for item := range s.inbound {
 		envelope, err := s.driver.config.Codec.Decode(s.ctx, item.data)
 		if err != nil {
-			s.report(err)
+			s.report(messaging.NewMessageError(err))
 			continue
 		}
 		delivery := messaging.NewDelivery(envelope, messaging.DeliveryInfo{Transport: "valkey.pubsub", Destination: item.channel, DeliveryID: envelope.ID, Attempt: 1, ReceivedAt: time.Now().UTC()})
 		result := messaging.InvokeHandler(s.ctx, s.handler, delivery)
 		if result.Disposition == messaging.DispositionRetry || result.Disposition == messaging.DispositionDeadLetter {
-			s.report(messaging.ErrUnsupportedDisposition)
+			s.report(messaging.NewMessageError(messaging.ErrUnsupportedDisposition))
 		} else if result.Err != nil {
-			s.report(result.Err)
+			s.report(messaging.NewMessageError(result.Err))
 		}
 	}
 }
