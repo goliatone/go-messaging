@@ -12,11 +12,24 @@ jobs:
         image: valkey/valkey:8-alpine
         ports:
           - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 2s
+          --health-timeout 1s
+          --health-retries 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: go.work
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test browser assets
+        run: |
+          node --check examples/chat-demo/web/app.js
+          node --check examples/chat-demo/web/storage.js
+          node --test examples/chat-demo/web/storage.test.js
       - name: Test every present module
         env:
           VALKEY_ADDRESS: 127.0.0.1:6379

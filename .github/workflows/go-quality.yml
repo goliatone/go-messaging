@@ -45,7 +45,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: go.work
 
       - name: Check formatting
         run: ./taskfile go:fmt:check
@@ -68,7 +68,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: go.work
 
       - name: Run full golangci-lint report for every module
         run: ./taskfile go:lint:report
@@ -85,7 +85,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: go.work
 
       - name: Check formatting
         run: ./taskfile go:fmt:check
@@ -102,7 +102,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: go.work
 
       - name: Run govulncheck and gosec for every module
         run: ./taskfile go:security:all
