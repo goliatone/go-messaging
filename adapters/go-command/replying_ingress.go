@@ -22,29 +22,50 @@ type ReplyingIngress struct {
 }
 
 func (i ReplyingIngress) Handler(ctx context.Context, delivery messaging.Delivery) messaging.HandleResult {
-	mapper := i.Errors
-	if mapper == nil || isTypedNil(mapper) {
-		mapper = DefaultErrorMapper{}
-	}
+	mapper := i.errorMapper()
 	if i.Ingress == nil || isTypedNil(i.Ingress) || delivery == nil || isTypedNil(delivery) {
 		return mapper.Map(fmt.Errorf("go-command adapter: replying ingress and delivery are required"), 0)
 	}
 	request := delivery.Envelope()
-	if request.Kind == messaging.KindQuery && request.ReplyTo == "" {
-		return messaging.Reject(fmt.Errorf("go-command adapter: query ingress requires a reply route"))
-	}
-	if request.ReplyTo != "" && request.CorrelationID == "" {
-		return messaging.Reject(fmt.Errorf("go-command adapter: reply request requires a correlation id"))
+	if err := validateReplyRequest(request); err != nil {
+		return messaging.Reject(err)
 	}
 	result, executionErr := i.Ingress.Execute(ctx, delivery)
 	if request.ReplyTo == "" {
 		return mapper.Map(executionErr, delivery.Info().Attempt)
 	}
+	return i.publishReply(ctx, request, result, executionErr, delivery.Info().Attempt, mapper)
+}
+
+func (i ReplyingIngress) errorMapper() ErrorMapper {
+	if i.Errors == nil || isTypedNil(i.Errors) {
+		return DefaultErrorMapper{}
+	}
+	return i.Errors
+}
+
+func validateReplyRequest(request messaging.Envelope) error {
+	if request.Kind == messaging.KindQuery && request.ReplyTo == "" {
+		return fmt.Errorf("go-command adapter: query ingress requires a reply route")
+	}
+	if request.ReplyTo != "" && request.CorrelationID == "" {
+		return fmt.Errorf("go-command adapter: reply request requires a correlation id")
+	}
+	return nil
+}
+
+func (i ReplyingIngress) publishReply(ctx context.Context, request messaging.Envelope, result IngressResult, executionErr error, attempt int, mapper ErrorMapper) messaging.HandleResult {
 	if result.Registration == nil || isTypedNil(result.Registration) {
-		return mapper.Map(executionErr, delivery.Info().Attempt)
+		if executionErr == nil {
+			executionErr = fmt.Errorf("go-command adapter: ingress completed without a registration")
+		}
+		if _, err := i.Replies.PublishFailure(ctx, request, executionErr); err != nil {
+			return mapper.Map(err, attempt)
+		}
+		return messaging.Complete()
 	}
 	if _, err := i.Replies.Publish(ctx, request, result.Registration, result.Outcome, executionErr); err != nil {
-		return mapper.Map(err, delivery.Info().Attempt)
+		return mapper.Map(err, attempt)
 	}
 	return messaging.Complete()
 }

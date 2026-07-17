@@ -179,7 +179,11 @@ func (r *Router) publishBinding(ctx context.Context, route Route, binding RouteB
 	}
 	started := time.Now()
 	result, err := publisher.Publish(ctx, binding.Destination, envelope.Clone())
-	r.observer.Observe(ctx, Observation{Operation: OperationPublish, LogicalRoute: route.Name, Kind: envelope.Kind, MessageType: envelope.Type, Transport: binding.Driver, Destination: binding.Destination.Name, CorrelationID: envelope.CorrelationID, Outcome: string(result.Outcome), Latency: time.Since(started), Err: err})
+	operation := OperationPublish
+	if envelope.Kind == KindReply {
+		operation = OperationReply
+	}
+	r.observer.Observe(ctx, Observation{Operation: operation, LogicalRoute: route.Name, Kind: envelope.Kind, MessageType: envelope.Type, Transport: binding.Driver, Destination: binding.Destination.Name, CorrelationID: envelope.CorrelationID, Outcome: string(result.Outcome), Latency: time.Since(started), Err: safeObservationError(err)})
 	return result.Clone(), err
 }
 

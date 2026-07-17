@@ -62,7 +62,23 @@ func TestIngressRejectsUnsupportedDisposition(t *testing.T) {
 	}
 }
 
-func TestIngressEnforcesWirePolicyAndObservesOutcome(t *testing.T) {
+func TestIngressRejectsInvalidWirePolicyAtStartup(t *testing.T) {
+	driver := &consumeStub{}
+	registry, err := NewDriverRegistry(map[string]Driver{"consumer": driver})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = NewIngress(registry, []IngressBinding{{
+		Name: "invalid", LogicalRoute: "invalid", Driver: "consumer", Source: Source{Name: "invalid"},
+		AcceptedSchemas: []string{""}, Handlers: []Handler{func(context.Context, Delivery) HandleResult { return Complete() }},
+	}})
+	if !errors.Is(err, ErrInvalidEnvelope) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func newObservedIngress(t *testing.T) (*consumeStub, *[]Observation) {
+	t.Helper()
 	driver := &consumeStub{}
 	registry, err := NewDriverRegistry(map[string]Driver{"consumer": driver})
 	if err != nil {
@@ -85,7 +101,11 @@ func TestIngressEnforcesWirePolicyAndObservesOutcome(t *testing.T) {
 	if _, err := ingress.Subscribe(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	return driver, &observations
+}
 
+func TestIngressObservesHandlerOutcome(t *testing.T) {
+	driver, observations := newObservedIngress(t)
 	accepted := validEnvelope()
 	accepted.Kind = KindEvent
 	accepted.Type = "orders.created"
@@ -93,19 +113,28 @@ func TestIngressEnforcesWirePolicyAndObservesOutcome(t *testing.T) {
 	if result.Disposition != DispositionRetry {
 		t.Fatalf("accepted result = %#v", result)
 	}
-	rejected := accepted
+	if len(*observations) != 1 {
+		t.Fatalf("observations = %#v", *observations)
+	}
+	if got := (*observations)[0]; got.Operation != OperationConsume || got.LogicalRoute != "orders" || got.Transport != "consumer" || got.Destination != "orders" || got.Attempt != 3 || got.Outcome != string(DispositionRetry) || !errors.Is(got.Err, context.DeadlineExceeded) {
+		t.Fatalf("accepted observation = %#v", got)
+	}
+}
+
+func TestIngressRejectsSchemaOutsideWirePolicy(t *testing.T) {
+	driver, observations := newObservedIngress(t)
+	rejected := validEnvelope()
+	rejected.Kind = KindEvent
+	rejected.Type = "orders.created"
 	rejected.SchemaVersion = "2"
-	result = driver.handler(context.Background(), NewDelivery(rejected, DeliveryInfo{Attempt: 1}))
+	result := driver.handler(context.Background(), NewDelivery(rejected, DeliveryInfo{Attempt: 1}))
 	if result.Disposition != DispositionReject || !errors.Is(result.Err, ErrInvalidEnvelope) {
 		t.Fatalf("rejected result = %#v", result)
 	}
-	if len(observations) != 2 {
-		t.Fatalf("observations = %#v", observations)
+	if len(*observations) != 1 {
+		t.Fatalf("observations = %#v", *observations)
 	}
-	if got := observations[0]; got.Operation != OperationConsume || got.LogicalRoute != "orders" || got.Transport != "consumer" || got.Destination != "orders" || got.Attempt != 3 || got.Outcome != string(DispositionRetry) || !errors.Is(got.Err, context.DeadlineExceeded) {
-		t.Fatalf("accepted observation = %#v", got)
-	}
-	if got := observations[1]; got.Outcome != string(DispositionReject) || !errors.Is(got.Err, ErrInvalidEnvelope) {
+	if got := (*observations)[0]; got.Outcome != string(DispositionReject) || !errors.Is(got.Err, ErrInvalidEnvelope) {
 		t.Fatalf("rejected observation = %#v", got)
 	}
 }

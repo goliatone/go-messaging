@@ -1,6 +1,7 @@
 package messaging
 
 import (
+	"context"
 	"errors"
 	"fmt"
 )
@@ -19,7 +20,45 @@ var (
 	ErrUnsupportedDisposition = errors.New("messaging: unsupported disposition")
 	ErrDeadLetter             = errors.New("messaging: dead-letter failure")
 	ErrHandlerPanic           = errors.New("messaging: handler panic")
+	ErrObservedOperation      = errors.New("messaging: observed operation failed")
 )
+
+func safeObservationError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var transportErr *TransportError
+	if errors.As(err, &transportErr) {
+		class := safeObservationClass(transportErr.Class)
+		if class == nil {
+			class = ErrObservedOperation
+		}
+		return &TransportError{
+			Class: class, Transport: transportErr.Transport,
+			Operation: transportErr.Operation, Temporary: transportErr.Temporary,
+		}
+	}
+	if class := safeObservationClass(err); class != nil {
+		return class
+	}
+	return ErrObservedOperation
+}
+
+func safeObservationClass(err error) error {
+	for _, candidate := range []error{
+		ErrInvalidEnvelope, ErrSchemaMismatch, ErrMessageTooLarge,
+		ErrUnknownRoute, ErrUnknownDriver, ErrUnsupportedCapability,
+		ErrPublishRejected, ErrPublishAmbiguous, ErrNotPublished,
+		ErrSubscriptionNotReady, ErrSubscriptionClosed, ErrReplyTimeout,
+		ErrCorrelation, ErrUnsupportedDisposition, ErrDeadLetter,
+		ErrHandlerPanic, context.Canceled, context.DeadlineExceeded,
+	} {
+		if errors.Is(err, candidate) {
+			return candidate
+		}
+	}
+	return nil
+}
 
 type TransportError struct {
 	Class     error

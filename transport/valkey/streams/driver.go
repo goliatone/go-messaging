@@ -36,7 +36,7 @@ func (c Config) validate() error {
 	if err := c.Valkey.Validate(); err != nil {
 		return err
 	}
-	if c.Codec == nil || c.BatchSize <= 0 || c.Block <= 0 || c.ClaimIdle <= 0 || c.ClaimInterval <= 0 || c.MaxDeliveries <= 0 || strings.TrimSpace(c.DeadLetterSuffix) == "" {
+	if c.Codec == nil || c.BatchSize <= 0 || c.Block < time.Millisecond || c.ClaimIdle < time.Millisecond || c.ClaimInterval <= 0 || c.MaxDeliveries <= 0 || strings.TrimSpace(c.DeadLetterSuffix) == "" {
 		return fmt.Errorf("valkey streams: invalid limits or codec")
 	}
 	return nil
@@ -272,7 +272,11 @@ func (s *subscription) handleEntries(entries []valkey.XRangeEntry) {
 
 func (s *subscription) handleEntry(entry valkey.XRangeEntry) {
 	raw, ok := entry.FieldValues[envelopeField]
-	attempt := max(s.deliveryCount(entry.ID), 1)
+	attempt, err := s.deliveryCount(entry.ID)
+	if err != nil {
+		s.report(err)
+		return
+	}
 	if !ok || len(raw) > s.driver.config.Valkey.MaxMessageBytes {
 		reason := messaging.ErrInvalidEnvelope
 		if len(raw) > s.driver.config.Valkey.MaxMessageBytes {
@@ -286,9 +290,9 @@ func (s *subscription) handleEntry(entry valkey.XRangeEntry) {
 		s.deadLetterAndAck(entry.ID, raw, err)
 		return
 	}
-	delivery := &streamDelivery{BasicDelivery: messaging.NewDelivery(envelope, messaging.DeliveryInfo{Transport: "valkey.streams", Destination: s.source.Name, DeliveryID: entry.ID, Attempt: int(attempt), ReceivedAt: time.Now().UTC()}), subscription: s, id: entry.ID, raw: raw}
+	delivery := &streamDelivery{BasicDelivery: messaging.NewDelivery(envelope, messaging.DeliveryInfo{Transport: "valkey.streams", Destination: s.source.Name, DeliveryID: entry.ID, Attempt: int(attempt), ReceivedAt: time.Now().UTC()}), subscription: s, settlement: s, id: entry.ID, raw: raw}
 	result := messaging.InvokeHandler(s.ctx, s.handler, delivery)
-	if delivery.settled.Load() {
+	if delivery.attempted.Load() {
 		return
 	}
 	s.settleResult(delivery, result, attempt)
@@ -328,21 +332,34 @@ func (s *subscription) settleResult(delivery *streamDelivery, result messaging.H
 	}
 }
 
-func (s *subscription) deliveryCount(id string) int64 {
+func (s *subscription) deliveryCount(id string) (int64, error) {
 	result := s.client.Do(s.ctx, s.client.B().Xpending().Key(s.source.Name).Group(s.source.Group).Start(id).End(id).Count(1).Build())
 	entries, err := result.ToArray()
-	if err != nil || len(entries) == 0 {
-		return 1
+	if err != nil {
+		return 0, shared.Classify("xpending", err)
+	}
+	return parseDeliveryCount(id, entries)
+}
+
+func parseDeliveryCount(id string, entries []valkey.ValkeyMessage) (int64, error) {
+	if len(entries) == 0 {
+		return 0, fmt.Errorf("valkey streams: XPENDING omitted delivery metadata for %q", id)
 	}
 	values, err := entries[0].ToArray()
-	if err != nil || len(values) < 4 {
-		return 1
+	if err != nil {
+		return 0, fmt.Errorf("valkey streams: parse XPENDING delivery metadata: %w", err)
+	}
+	if len(values) < 4 {
+		return 0, fmt.Errorf("valkey streams: malformed XPENDING delivery metadata")
 	}
 	count, err := values[3].AsInt64()
 	if err != nil {
-		return 1
+		return 0, fmt.Errorf("valkey streams: parse XPENDING delivery count: %w", err)
 	}
-	return count
+	if count <= 0 {
+		return 0, fmt.Errorf("valkey streams: invalid XPENDING delivery count %d", count)
+	}
+	return count, nil
 }
 func (s *subscription) ack(ctx context.Context, id string) error {
 	_, err := s.client.Do(ctx, s.client.B().Xack().Key(s.source.Name).Group(s.source.Group).Id(id).Build()).AsInt64()
@@ -352,10 +369,7 @@ func (s *subscription) ack(ctx context.Context, id string) error {
 	return nil
 }
 func (s *subscription) deadLetter(ctx context.Context, id, raw string, reason error) error {
-	message := "rejected"
-	if reason != nil {
-		message = reason.Error()
-	}
+	message := safeDeadLetterReason(reason)
 	destination := s.source.Name + s.driver.config.DeadLetterSuffix
 	_, err := s.client.Do(ctx, s.client.B().Xadd().Key(destination).Id("*").FieldValue().FieldValue("original_stream", s.source.Name).FieldValue("original_id", id).FieldValue("reason", message).FieldValue(envelopeField, raw).Build()).ToString()
 	if err != nil {
@@ -364,19 +378,51 @@ func (s *subscription) deadLetter(ctx context.Context, id, raw string, reason er
 	return nil
 }
 
+func safeDeadLetterReason(reason error) string {
+	for _, candidate := range []error{
+		messaging.ErrInvalidEnvelope,
+		messaging.ErrSchemaMismatch,
+		messaging.ErrMessageTooLarge,
+		messaging.ErrUnsupportedDisposition,
+		messaging.ErrHandlerPanic,
+		context.Canceled,
+		context.DeadlineExceeded,
+	} {
+		if errors.Is(reason, candidate) {
+			return candidate.Error()
+		}
+	}
+	return "rejected"
+}
+
 type streamDelivery struct {
 	messaging.BasicDelivery
 	subscription *subscription
+	settlement   streamSettlement
 	id           string
 	raw          string
+	attempted    atomic.Bool
 	settled      atomic.Bool
 }
 
+type streamSettlement interface {
+	ack(context.Context, string) error
+	deadLetter(context.Context, string, string, error) error
+}
+
+func (d *streamDelivery) settlementStore() streamSettlement {
+	if d.settlement != nil {
+		return d.settlement
+	}
+	return d.subscription
+}
+
 func (d *streamDelivery) Ack(ctx context.Context) error {
+	d.attempted.Store(true)
 	if !d.settled.CompareAndSwap(false, true) {
 		return nil
 	}
-	if err := d.subscription.ack(ctx, d.id); err != nil {
+	if err := d.settlementStore().ack(ctx, d.id); err != nil {
 		d.settled.Store(false)
 		return err
 	}
@@ -385,7 +431,7 @@ func (d *streamDelivery) Ack(ctx context.Context) error {
 func (d *streamDelivery) Nack(ctx context.Context, options messaging.NackOptions) error {
 	switch options.Disposition {
 	case messaging.DispositionRetry:
-		return nil
+		return d.retry(ctx, options)
 	case messaging.DispositionReject:
 		return d.Ack(ctx)
 	case messaging.DispositionDeadLetter:
@@ -394,21 +440,49 @@ func (d *streamDelivery) Nack(ctx context.Context, options messaging.NackOptions
 		return messaging.ErrUnsupportedDisposition
 	}
 }
+
+func (d *streamDelivery) retry(ctx context.Context, options messaging.NackOptions) error {
+	d.attempted.Store(true)
+	if !d.settled.CompareAndSwap(false, true) {
+		return nil
+	}
+	var warning error
+	if options.RetryAfter > 0 {
+		warning = fmt.Errorf("%w: Valkey Streams does not support exact per-message retry delay", messaging.ErrUnsupportedCapability)
+		d.subscription.report(warning)
+	}
+	if int64(d.Info().Attempt) < d.subscription.driver.config.MaxDeliveries {
+		return warning
+	}
+	reason := error(nil)
+	if strings.TrimSpace(options.Reason) != "" {
+		reason = errors.New(options.Reason)
+	}
+	if err := d.deadLetterSettled(ctx, reason); err != nil {
+		d.settled.Store(false)
+		return errors.Join(warning, err)
+	}
+	return warning
+}
 func (d *streamDelivery) deadLetter(reason error) error {
 	return d.deadLetterContext(d.subscription.ctx, reason)
 }
 
 func (d *streamDelivery) deadLetterContext(ctx context.Context, reason error) error {
+	d.attempted.Store(true)
 	if !d.settled.CompareAndSwap(false, true) {
 		return nil
 	}
-	if err := d.subscription.deadLetter(ctx, d.id, d.raw, reason); err != nil {
-		d.settled.Store(false)
-		return err
-	}
-	if err := d.subscription.ack(ctx, d.id); err != nil {
+	if err := d.deadLetterSettled(ctx, reason); err != nil {
 		d.settled.Store(false)
 		return err
 	}
 	return nil
+}
+
+func (d *streamDelivery) deadLetterSettled(ctx context.Context, reason error) error {
+	if err := d.settlementStore().deadLetter(ctx, d.id, d.raw, reason); err != nil {
+		return err
+	}
+	return d.settlementStore().ack(ctx, d.id)
 }

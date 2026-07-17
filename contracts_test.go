@@ -32,6 +32,28 @@ func TestTransportErrorClassificationDoesNotExposeCause(t *testing.T) {
 	}
 }
 
+func TestObservationErrorDoesNotExposeUnknownCause(t *testing.T) {
+	err := safeObservationError(errors.New("credential=secret"))
+	if !errors.Is(err, ErrObservedOperation) || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("unsafe observation error: %v", err)
+	}
+}
+
+func TestObservationTransportErrorDropsProviderCause(t *testing.T) {
+	cause := errors.New("password=secret")
+	err := safeObservationError(&TransportError{Class: ErrPublishAmbiguous, Transport: "valkey", Operation: "publish", Cause: cause})
+	if !errors.Is(err, ErrPublishAmbiguous) || errors.Is(err, cause) || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("unsafe observation transport error: %v", err)
+	}
+}
+
+func TestObservationTransportErrorNormalizesUnknownClass(t *testing.T) {
+	err := safeObservationError(&TransportError{Class: errors.New("credential=secret"), Transport: "custom", Operation: "publish"})
+	if !errors.Is(err, ErrObservedOperation) || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("unsafe observation class: %v", err)
+	}
+}
+
 func TestDispositionConstructors(t *testing.T) {
 	err := errors.New("try again")
 	got := Retry(err, time.Second)

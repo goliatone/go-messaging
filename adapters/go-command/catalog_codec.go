@@ -402,6 +402,11 @@ func (i *CatalogIngress) Execute(ctx context.Context, delivery messaging.Deliver
 	}
 	info := delivery.Info()
 	ctx = contextWithDeliveryProvenance(ctx, i.logicalRoute, envelope, info)
+	ctx, cancel, err := contextWithEnvelopeDeadline(ctx, envelope)
+	if err != nil {
+		return IngressResult{Registration: registration, Message: message}, err
+	}
+	defer cancel()
 	metadata := IngressMetadata{
 		EnvelopeID: envelope.ID, EnvelopeKind: envelope.Kind,
 		LogicalRoute: i.logicalRoute,

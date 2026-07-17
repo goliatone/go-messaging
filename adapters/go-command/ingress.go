@@ -107,19 +107,33 @@ func (i *TypedIngress) executeAs(ctx context.Context, delivery messaging.Deliver
 		return IngressResult{Registration: registration, Message: message}, err
 	}
 
-	if !envelope.Deadline.IsZero() {
-		if !envelope.Deadline.After(time.Now()) {
-			return IngressResult{}, context.DeadlineExceeded
-		}
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithDeadline(ctx, envelope.Deadline)
-		defer cancel()
+	ctx, cancel, err := contextWithEnvelopeDeadline(ctx, envelope)
+	if err != nil {
+		return IngressResult{Registration: registration, Message: message}, err
 	}
+	defer cancel()
 	outcome, err := i.executor.ExecuteInbound(ctx, registration, message, options)
 	if err != nil {
 		return IngressResult{Registration: registration, Message: message}, err
 	}
 	return IngressResult{Registration: registration, Message: message, Outcome: outcome}, nil
+}
+
+func contextWithEnvelopeDeadline(ctx context.Context, envelope messaging.Envelope) (context.Context, context.CancelFunc, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return ctx, func() {}, err
+	}
+	if envelope.Deadline.IsZero() {
+		return ctx, func() {}, nil
+	}
+	if !envelope.Deadline.After(time.Now()) {
+		return ctx, func() {}, context.DeadlineExceeded
+	}
+	bounded, cancel := context.WithDeadline(ctx, envelope.Deadline)
+	return bounded, cancel, nil
 }
 
 // Handler adapts typed ingress to the transport-neutral delivery contract.

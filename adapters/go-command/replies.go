@@ -42,9 +42,20 @@ type ReplyCodec interface {
 	ContentType() string
 }
 
+type FailureReplyCodec interface {
+	EncodeFailure(context.Context, error) ([]byte, error)
+}
+
 type JSONReplyCodec struct{}
 
 func (JSONReplyCodec) ContentType() string { return "application/vnd.goliatone.go-command-reply+json" }
+
+func (JSONReplyCodec) EncodeFailure(_ context.Context, dispatchErr error) ([]byte, error) {
+	if dispatchErr == nil {
+		dispatchErr = fmt.Errorf("go-command adapter: remote command execution failed")
+	}
+	return json.Marshal(ReplyDTO{Version: ReplyWireVersion, Failure: failureFromError(dispatchErr)})
+}
 
 func (JSONReplyCodec) Encode(_ context.Context, registration command.MessageRegistration, outcome command.DispatchOutcome, dispatchErr error) ([]byte, error) {
 	if err := validateRegistration(registration); err != nil {
@@ -222,6 +233,22 @@ type ReplyPublisher struct {
 	Codec  ReplyCodec
 }
 
+func (p ReplyPublisher) PublishFailure(ctx context.Context, request messaging.Envelope, dispatchErr error) (messaging.RoutingResult, error) {
+	codec := p.Codec
+	if codec == nil || isTypedNil(codec) {
+		codec = JSONReplyCodec{}
+	}
+	failureCodec, ok := codec.(FailureReplyCodec)
+	if !ok || isTypedNil(failureCodec) {
+		return messaging.RoutingResult{}, fmt.Errorf("go-command adapter: reply codec cannot encode registration-independent failures")
+	}
+	payload, err := failureCodec.EncodeFailure(ctx, dispatchErr)
+	if err != nil {
+		return messaging.RoutingResult{}, err
+	}
+	return p.publishPayload(ctx, request, codec.ContentType(), payload)
+}
+
 func (p ReplyPublisher) Publish(ctx context.Context, request messaging.Envelope, registration command.MessageRegistration, outcome command.DispatchOutcome, dispatchErr error) (messaging.RoutingResult, error) {
 	if p.Router == nil {
 		return messaging.RoutingResult{}, fmt.Errorf("go-command adapter: reply router is required")
@@ -237,11 +264,21 @@ func (p ReplyPublisher) Publish(ctx context.Context, request messaging.Envelope,
 	if err != nil {
 		return messaging.RoutingResult{}, err
 	}
+	return p.publishPayload(ctx, request, codec.ContentType(), payload)
+}
+
+func (p ReplyPublisher) publishPayload(ctx context.Context, request messaging.Envelope, contentType string, payload []byte) (messaging.RoutingResult, error) {
+	if p.Router == nil {
+		return messaging.RoutingResult{}, fmt.Errorf("go-command adapter: reply router is required")
+	}
+	if strings.TrimSpace(request.ReplyTo) == "" {
+		return messaging.RoutingResult{}, fmt.Errorf("go-command adapter: request does not name a logical reply route")
+	}
 	id, err := newEnvelopeID()
 	if err != nil {
 		return messaging.RoutingResult{}, err
 	}
-	reply := messaging.NewEnvelope(id, request.Type, messaging.KindReply, request.SchemaVersion, codec.ContentType(), payload, nil)
+	reply := messaging.NewEnvelope(id, request.Type, messaging.KindReply, request.SchemaVersion, contentType, payload, nil)
 	reply.CorrelationID = request.CorrelationID
 	reply.CausationID = request.ID
 	result, err := p.Router.Publish(ctx, request.ReplyTo, reply)

@@ -69,6 +69,9 @@ func (d *MemoryDriver) Subscribe(_ context.Context, source messaging.Source, han
 	return sub, nil
 }
 func (d *MemoryDriver) Publish(ctx context.Context, destination messaging.Destination, envelope messaging.Envelope) (messaging.PublishResult, error) {
+	if err := ctx.Err(); err != nil {
+		return messaging.PublishResult{Outcome: messaging.PublishDefinitelyNotPublished}, err
+	}
 	if err := envelope.Validate(); err != nil {
 		return messaging.PublishResult{Outcome: messaging.PublishRejected}, err
 	}

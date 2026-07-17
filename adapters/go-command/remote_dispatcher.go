@@ -192,8 +192,8 @@ func (d *RemoteDispatcher) HandleReply(_ context.Context, delivery messaging.Del
 
 func (d *RemoteDispatcher) resolveReplyRoute(requestRoute string) (string, error) {
 	if d.replyRoute != "" {
-		if _, ok := d.router.Route(d.replyRoute); !ok {
-			return "", fmt.Errorf("%w: %s", messaging.ErrUnknownRoute, d.replyRoute)
+		if err := d.validateReplyRoute(d.replyRoute); err != nil {
+			return "", err
 		}
 		return d.replyRoute, nil
 	}
@@ -202,9 +202,27 @@ func (d *RemoteDispatcher) resolveReplyRoute(requestRoute string) (string, error
 		return "", fmt.Errorf("%w: %s", messaging.ErrUnknownRoute, requestRoute)
 	}
 	if slices.Contains(route.Required, messaging.CapabilityRequestReply) {
+		if err := validateReplyKinds(route); err != nil {
+			return "", err
+		}
 		return requestRoute, nil
 	}
 	return "", fmt.Errorf("%w: remote route %q requires request/reply or an explicit reply route", messaging.ErrUnsupportedCapability, requestRoute)
+}
+
+func (d *RemoteDispatcher) validateReplyRoute(name string) error {
+	route, ok := d.router.Route(name)
+	if !ok {
+		return fmt.Errorf("%w: %s", messaging.ErrUnknownRoute, name)
+	}
+	return validateReplyKinds(route)
+}
+
+func validateReplyKinds(route messaging.Route) error {
+	if len(route.Kinds) > 0 && !slices.Contains(route.Kinds, messaging.KindReply) {
+		return fmt.Errorf("%w: reply route %q does not accept reply envelopes", messaging.ErrUnsupportedCapability, route.Name)
+	}
+	return nil
 }
 
 func (d *RemoteDispatcher) encodeRequest(ctx context.Context, registration command.MessageRegistration, message any, options command.DispatchOptions, replyRoute string) (messaging.Envelope, error) {

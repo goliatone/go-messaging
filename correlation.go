@@ -14,11 +14,13 @@ type CorrelationRegistry struct {
 	pending        map[string]*pendingReply
 	capacity       int
 	defaultTimeout time.Duration
+	observer       Observer
 }
 
 type pendingReply struct {
 	expectedType string
 	deadline     time.Time
+	registeredAt time.Time
 	result       chan correlationResult
 }
 
@@ -35,11 +37,15 @@ type ReplyWaiter struct {
 	awaited  atomic.Bool
 }
 
-func NewCorrelationRegistry(capacity int, defaultTimeout time.Duration) (*CorrelationRegistry, error) {
+func NewCorrelationRegistry(capacity int, defaultTimeout time.Duration, observers ...Observer) (*CorrelationRegistry, error) {
 	if capacity <= 0 || defaultTimeout <= 0 {
 		return nil, fmt.Errorf("%w: positive capacity and timeout are required", ErrCorrelation)
 	}
-	return &CorrelationRegistry{pending: make(map[string]*pendingReply), capacity: capacity, defaultTimeout: defaultTimeout}, nil
+	observer := Observer(NopObserver{})
+	if len(observers) > 0 && observers[0] != nil {
+		observer = observers[0]
+	}
+	return &CorrelationRegistry{pending: make(map[string]*pendingReply), capacity: capacity, defaultTimeout: defaultTimeout, observer: observer}, nil
 }
 
 // Register must be called before publishing the corresponding request.
@@ -63,7 +69,7 @@ func (r *CorrelationRegistry) Register(correlationID, expectedType string, deadl
 	if _, exists := r.pending[correlationID]; exists {
 		return nil, fmt.Errorf("%w: duplicate id %q", ErrCorrelation, correlationID)
 	}
-	pending := &pendingReply{expectedType: expectedType, deadline: deadline, result: make(chan correlationResult, 1)}
+	pending := &pendingReply{expectedType: expectedType, deadline: deadline, registeredAt: time.Now(), result: make(chan correlationResult, 1)}
 	r.pending[correlationID] = pending
 	return &ReplyWaiter{registry: r, id: correlationID, pending: pending}, nil
 }
@@ -72,21 +78,41 @@ func (r *CorrelationRegistry) Register(correlationID, expectedType string, deadl
 // unknown, or mismatched replies; mismatches leave the real waiter active.
 func (r *CorrelationRegistry) Deliver(envelope Envelope) bool {
 	if envelope.Kind != KindReply || envelope.CorrelationID == "" {
+		r.observeReply(envelope, nil, "invalid", ErrCorrelation)
 		return false
 	}
 	r.mu.Lock()
 	pending, ok := r.pending[envelope.CorrelationID]
-	if !ok || pending.expectedType != envelope.Type || time.Now().After(pending.deadline) {
-		if ok && time.Now().After(pending.deadline) {
+	now := time.Now()
+	if !ok || pending.expectedType != envelope.Type || now.After(pending.deadline) {
+		outcome := "unknown_or_duplicate"
+		if ok && pending.expectedType != envelope.Type {
+			outcome = "mismatched"
+		}
+		if ok && now.After(pending.deadline) {
 			delete(r.pending, envelope.CorrelationID)
+			outcome = "late"
 		}
 		r.mu.Unlock()
+		r.observeReply(envelope, pending, outcome, ErrCorrelation)
 		return false
 	}
 	delete(r.pending, envelope.CorrelationID)
 	r.mu.Unlock()
 	pending.result <- correlationResult{envelope: envelope.Clone()}
+	r.observeReply(envelope, pending, "matched", nil)
 	return true
+}
+
+func (r *CorrelationRegistry) observeReply(envelope Envelope, pending *pendingReply, outcome string, err error) {
+	latency := time.Duration(0)
+	if pending != nil {
+		latency = time.Since(pending.registeredAt)
+	}
+	r.observer.Observe(context.Background(), Observation{
+		Operation: OperationReply, Kind: envelope.Kind, MessageType: envelope.Type,
+		CorrelationID: envelope.CorrelationID, Outcome: outcome, Latency: latency, Err: err,
+	})
 }
 
 func (w *ReplyWaiter) Await(ctx context.Context) (Envelope, error) {
