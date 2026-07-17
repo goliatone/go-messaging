@@ -92,7 +92,7 @@ func (d *RemoteDispatcher) DispatchRemote(ctx context.Context, route command.Dis
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	options, err := prepareRemoteOptions(options)
+	options, lineage, err := prepareRemoteOptions(ctx, options)
 	if err != nil {
 		return command.DispatchOutcome{}, err
 	}
@@ -100,7 +100,7 @@ func (d *RemoteDispatcher) DispatchRemote(ctx context.Context, route command.Dis
 	if err != nil {
 		return command.DispatchOutcome{}, err
 	}
-	envelope, err := d.encodeRequest(ctx, registration, message, options, replyRoute)
+	envelope, err := d.encodeRequest(ctx, registration, message, options, replyRoute, lineage.causationID)
 	if err != nil {
 		return command.DispatchOutcome{}, err
 	}
@@ -120,23 +120,27 @@ func (d *RemoteDispatcher) validateDispatch(route command.DispatchRoute, registr
 	return nil
 }
 
-func prepareRemoteOptions(options command.DispatchOptions) (command.DispatchOptions, error) {
+func prepareRemoteOptions(ctx context.Context, options command.DispatchOptions) (command.DispatchOptions, outboundLineage, error) {
+	lineage := outboundLineageFromContext(ctx)
 	mode := command.NormalizeExecutionMode(options.Mode)
 	if mode == "" {
 		mode = command.ExecutionModeInline
 	}
 	options.Mode = mode
 	if err := command.ValidateDispatchOptions(mode, options); err != nil {
-		return command.DispatchOptions{}, err
+		return command.DispatchOptions{}, outboundLineage{}, err
 	}
 	if strings.TrimSpace(options.CorrelationID) == "" {
-		id, err := newEnvelopeID()
-		if err != nil {
-			return command.DispatchOptions{}, err
+		options.CorrelationID = lineage.correlationID
+		if options.CorrelationID == "" {
+			id, err := newEnvelopeID()
+			if err != nil {
+				return command.DispatchOptions{}, outboundLineage{}, err
+			}
+			options.CorrelationID = id
 		}
-		options.CorrelationID = id
 	}
-	return options, nil
+	return options, lineage, nil
 }
 
 func (d *RemoteDispatcher) publishAndAwait(ctx context.Context, routeName string, registration command.MessageRegistration, correlationID string, expectedMode command.ExecutionMode, envelope messaging.Envelope) (command.DispatchOutcome, error) {
@@ -225,7 +229,7 @@ func validateReplyKinds(route messaging.Route) error {
 	return nil
 }
 
-func (d *RemoteDispatcher) encodeRequest(ctx context.Context, registration command.MessageRegistration, message any, options command.DispatchOptions, replyRoute string) (messaging.Envelope, error) {
+func (d *RemoteDispatcher) encodeRequest(ctx context.Context, registration command.MessageRegistration, message any, options command.DispatchOptions, replyRoute, causationID string) (messaging.Envelope, error) {
 	kind := messaging.KindCommand
 	if registration.Kind() == command.HandlerKindQuery {
 		kind = messaging.KindQuery
@@ -257,6 +261,7 @@ func (d *RemoteDispatcher) encodeRequest(ctx context.Context, registration comma
 	headers := headersFromDispatchOptions(options)
 	envelope := messaging.NewEnvelope(id, messageType, kind, d.schemaVersion, contentType, payload, headers)
 	envelope.CorrelationID = options.CorrelationID
+	envelope.CausationID = strings.TrimSpace(causationID)
 	envelope.ReplyTo = replyRoute
 	if deadline, ok := ctx.Deadline(); ok {
 		envelope.Deadline = deadline

@@ -8,6 +8,30 @@ import (
 	messaging "github.com/goliatone/go-messaging"
 )
 
+type outboundLineage struct {
+	correlationID string
+	causationID   string
+}
+
+// outboundLineageFromContext preserves the trace shared by a nested dispatch
+// and identifies the ingress delivery as its immediate cause. Contexts created
+// outside a delivery may carry only an upstream causation ID, which remains a
+// useful fallback instead of dropping the lineage entirely.
+func outboundLineageFromContext(ctx context.Context) outboundLineage {
+	provenance, ok := command.DispatchProvenanceFromContext(ctx)
+	if !ok {
+		return outboundLineage{}
+	}
+	lineage := outboundLineage{
+		correlationID: strings.TrimSpace(provenance.CorrelationID),
+		causationID:   strings.TrimSpace(provenance.DeliveryID),
+	}
+	if lineage.causationID == "" {
+		lineage.causationID = strings.TrimSpace(provenance.CausationID)
+	}
+	return lineage
+}
+
 func contextWithDeliveryProvenance(ctx context.Context, logicalRoute string, envelope messaging.Envelope, info messaging.DeliveryInfo) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
