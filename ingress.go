@@ -65,9 +65,7 @@ type IngressOption func(*Ingress)
 
 func WithIngressObserver(observer Observer) IngressOption {
 	return func(ingress *Ingress) {
-		if observer != nil {
-			ingress.observer = observer
-		}
+		ingress.observer = protectObserver(observer)
 	}
 }
 
@@ -75,7 +73,7 @@ func NewIngress(drivers *DriverRegistry, bindings []IngressBinding, options ...I
 	if drivers == nil {
 		return nil, fmt.Errorf("%w: driver registry is required", ErrUnknownDriver)
 	}
-	i := &Ingress{drivers: drivers, observer: NopObserver{}}
+	i := &Ingress{drivers: drivers, observer: protectObserver(nil)}
 	for _, option := range options {
 		if option != nil {
 			option(i)

@@ -1,9 +1,11 @@
 package commandadapter
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"reflect"
 	"sort"
 	"strings"
@@ -37,6 +39,24 @@ type CatalogDispatchDTO struct {
 	Payload       map[string]any    `json:"payload"`
 	IDs           []string          `json:"ids,omitempty"`
 	Options       CatalogOptionsDTO `json:"options,omitempty"`
+}
+
+// UnmarshalJSON preserves JSON numbers as json.Number. The catalog DTO uses a
+// structured map for go-command compatibility, so default float64 decoding
+// would otherwise corrupt integer identifiers above 2^53.
+func (d *CatalogDispatchDTO) UnmarshalJSON(data []byte) error {
+	type wire CatalogDispatchDTO
+	var decoded wire
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return err
+	}
+	*d = CatalogDispatchDTO(decoded)
+	return nil
 }
 
 type CatalogBinding struct {
@@ -158,8 +178,8 @@ func (c *JSONCatalogCodec) EncodeCatalog(ctx context.Context, registration comma
 	if err != nil {
 		return CatalogDispatchDTO{}, err
 	}
-	payload := make(map[string]any)
-	if decodeErr := json.Unmarshal(payloadBytes, &payload); decodeErr != nil {
+	payload, decodeErr := decodeJSONObject(payloadBytes)
+	if decodeErr != nil {
 		return CatalogDispatchDTO{}, fmt.Errorf("go-command adapter: catalog payload must be a structured object: %w", decodeErr)
 	}
 	optionsDTO, err := encodeCatalogOptions(options)
@@ -318,11 +338,38 @@ func cloneAnyMap(source map[string]any) (map[string]any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("go-command adapter: catalog payload is not JSON-compatible: %w", err)
 	}
-	var cloned map[string]any
-	if decodeErr := json.Unmarshal(data, &cloned); decodeErr != nil {
+	cloned, decodeErr := decodeJSONObject(data)
+	if decodeErr != nil {
 		return nil, fmt.Errorf("go-command adapter: clone catalog payload: %w", decodeErr)
 	}
 	return cloned, nil
+}
+
+func decodeJSONObject(data []byte) (map[string]any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var value map[string]any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	if value == nil {
+		value = map[string]any{}
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
+func ensureJSONEOF(decoder *json.Decoder) error {
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("multiple JSON values are not supported")
+		}
+		return err
+	}
+	return nil
 }
 
 func (r catalogBindingRecord) validateRegistration(registration command.MessageRegistration) error {
@@ -415,7 +462,7 @@ func (i *CatalogIngress) Execute(ctx context.Context, delivery messaging.Deliver
 	}
 	outcome, err := i.executor.ExecuteCatalog(ctx, request, registration, message, metadata)
 	if err != nil {
-		return IngressResult{Registration: registration, Message: message}, err
+		return IngressResult{Registration: registration, Message: message}, classifyEnvelopeDeadline(envelope, err)
 	}
 	return IngressResult{Registration: registration, Message: message, Outcome: outcome}, nil
 }

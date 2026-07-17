@@ -27,7 +27,13 @@ func (*MemoryDriver) Capabilities() messaging.Capabilities {
 }
 func (d *MemoryDriver) Ready() <-chan struct{} { return d.ready }
 func (d *MemoryDriver) Errors() <-chan error   { return d.errors }
-func (d *MemoryDriver) Start(context.Context) error {
+func (d *MemoryDriver) Start(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.closed {
@@ -53,7 +59,13 @@ func (d *MemoryDriver) Close(context.Context) error {
 	close(d.errors)
 	return nil
 }
-func (d *MemoryDriver) Subscribe(_ context.Context, source messaging.Source, handler messaging.Handler) (messaging.Subscription, error) {
+func (d *MemoryDriver) Subscribe(ctx context.Context, source messaging.Source, handler messaging.Handler) (messaging.Subscription, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if !d.started {
@@ -69,6 +81,9 @@ func (d *MemoryDriver) Subscribe(_ context.Context, source messaging.Source, han
 	return sub, nil
 }
 func (d *MemoryDriver) Publish(ctx context.Context, destination messaging.Destination, envelope messaging.Envelope) (messaging.PublishResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if err := ctx.Err(); err != nil {
 		return messaging.PublishResult{Outcome: messaging.PublishDefinitelyNotPublished}, err
 	}
@@ -88,21 +103,19 @@ func (d *MemoryDriver) Publish(ctx context.Context, destination messaging.Destin
 	}
 	d.mu.RUnlock()
 	for _, sub := range subscribers {
-		delivery := messaging.NewDelivery(envelope, messaging.DeliveryInfo{Transport: "memory", Destination: destination.Name, DeliveryID: fmt.Sprintf("memory-%d", time.Now().UnixNano()), Attempt: 1, ReceivedAt: time.Now().UTC()})
-		result := sub.handler(ctx, delivery)
-		if result.Disposition == messaging.DispositionRetry || result.Disposition == messaging.DispositionDeadLetter {
-			select {
-			case sub.errors <- messaging.ErrUnsupportedDisposition:
-			default:
-			}
-		}
+		delivery := messaging.NewDelivery(envelope, messaging.DeliveryInfo{
+			Transport: "memory", Destination: destination.Name,
+			DeliveryID: fmt.Sprintf("memory-%d", time.Now().UnixNano()), Attempt: 1, ReceivedAt: time.Now().UTC(),
+			Metadata: map[string]string{"driver": "memory"},
+		})
+		sub.invoke(ctx, delivery)
 	}
 	count := int64(len(subscribers))
 	return messaging.PublishResult{Outcome: messaging.PublishAccepted, Transport: "memory", Destination: destination.Name, RecipientCount: &count}, nil
 }
 
 type MemorySubscription struct {
-	mu      sync.Mutex
+	mu      sync.RWMutex
 	id      int
 	driver  *MemoryDriver
 	source  messaging.Source
@@ -127,5 +140,20 @@ func (s *MemorySubscription) closeLocked() {
 	if !s.closed {
 		s.closed = true
 		close(s.errors)
+	}
+}
+
+func (s *MemorySubscription) invoke(ctx context.Context, delivery messaging.Delivery) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return
+	}
+	result := messaging.InvokeHandler(ctx, s.handler, delivery)
+	if result.Disposition == messaging.DispositionRetry || result.Disposition == messaging.DispositionDeadLetter {
+		select {
+		case s.errors <- messaging.ErrUnsupportedDisposition:
+		default:
+		}
 	}
 }

@@ -112,3 +112,26 @@ func TestCorrelationObservesMatchedAndLateReplies(t *testing.T) {
 		t.Fatalf("observations = %#v", observations)
 	}
 }
+
+func TestCorrelationObserverPanicDoesNotLoseReply(t *testing.T) {
+	r, err := NewCorrelationRegistry(1, time.Second, ObserverFunc(func(context.Context, Observation) {
+		panic("observer failed")
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waiter, err := r.Register("corr", "reply", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply := validEnvelope()
+	reply.Kind = KindReply
+	reply.Type = "reply"
+	reply.CorrelationID = "corr"
+	if !r.Deliver(reply) {
+		t.Fatal("reply was not delivered")
+	}
+	if got, err := waiter.Await(context.Background()); err != nil || got.CorrelationID != "corr" {
+		t.Fatalf("reply=%#v err=%v", got, err)
+	}
+}

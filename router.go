@@ -27,10 +27,7 @@ func NewRouter(drivers *DriverRegistry, routes []Route, observer Observer) (*Rou
 	if drivers == nil {
 		return nil, fmt.Errorf("%w: driver registry is required", ErrUnknownDriver)
 	}
-	if observer == nil {
-		observer = NopObserver{}
-	}
-	r := &Router{drivers: drivers, observer: observer}
+	r := &Router{drivers: drivers, observer: protectObserver(observer)}
 	if err := r.ReplaceRoutes(routes); err != nil {
 		return nil, err
 	}

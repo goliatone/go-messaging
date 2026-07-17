@@ -103,6 +103,13 @@ func (d *Driver) Publish(ctx context.Context, destination messaging.Destination,
 	if strings.TrimSpace(destination.Name) == "" {
 		return messaging.PublishResult{Outcome: messaging.PublishRejected}, fmt.Errorf("%w: empty channel", messaging.ErrPublishRejected)
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		outcome, classified := shared.PublicationFailure("publish", ctxErr, false)
+		return messaging.PublishResult{Outcome: outcome}, classified
+	}
 	d.mu.Lock()
 	client := d.client
 	closed := d.closed
@@ -112,23 +119,25 @@ func (d *Driver) Publish(ctx context.Context, destination messaging.Destination,
 	}
 	data, err := d.config.Codec.Encode(ctx, envelope.Clone())
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			outcome, classified := shared.PublicationFailure("publish", ctxErr, false)
+			return messaging.PublishResult{Outcome: outcome}, classified
+		}
 		return messaging.PublishResult{Outcome: messaging.PublishRejected}, err
 	}
 	if len(data) > d.config.Valkey.MaxMessageBytes {
 		return messaging.PublishResult{Outcome: messaging.PublishRejected}, messaging.ErrMessageTooLarge
 	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		outcome, classified := shared.PublicationFailure("publish", ctxErr, false)
+		return messaging.PublishResult{Outcome: outcome}, classified
+	}
 	count, err := client.Do(ctx, client.B().Publish().Channel(destination.Name).Message(string(data)).Build()).AsInt64()
 	if err != nil {
-		return messaging.PublishResult{Outcome: classifiedPublishOutcome(err)}, shared.Classify("publish", err)
+		outcome, classified := shared.PublicationFailure("publish", err, true)
+		return messaging.PublishResult{Outcome: outcome}, classified
 	}
 	return messaging.PublishResult{Outcome: messaging.PublishAccepted, Transport: "valkey.pubsub", Destination: destination.Name, RecipientCount: &count}, nil
-}
-
-func classifiedPublishOutcome(err error) messaging.PublishOutcome {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, valkey.ErrClosing) {
-		return messaging.PublishDefinitelyNotPublished
-	}
-	return messaging.PublishAmbiguous
 }
 
 func (d *Driver) Subscribe(ctx context.Context, source messaging.Source, handler messaging.Handler) (messaging.Subscription, error) {

@@ -2,11 +2,27 @@ package shared
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	messaging "github.com/goliatone/go-messaging"
 	valkey "github.com/valkey-io/valkey-go"
 )
+
+func TestPublicationFailureIsAmbiguousAfterAttempt(t *testing.T) {
+	outcome, err := PublicationFailure("xadd", context.DeadlineExceeded, true)
+	if outcome != messaging.PublishAmbiguous || !errors.Is(err, messaging.ErrPublishAmbiguous) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("outcome=%q err=%v", outcome, err)
+	}
+}
+
+func TestPublicationFailureIsDefiniteBeforeAttempt(t *testing.T) {
+	outcome, err := PublicationFailure("publish", context.Canceled, false)
+	if outcome != messaging.PublishDefinitelyNotPublished || !errors.Is(err, messaging.ErrNotPublished) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("outcome=%q err=%v", outcome, err)
+	}
+}
 
 type contextCapturingClient struct {
 	valkey.Client

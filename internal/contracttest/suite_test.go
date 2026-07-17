@@ -10,5 +10,5 @@ import (
 func TestSuiteAgainstMemoryDriver(t *testing.T) {
 	Run(t, func(*testing.T) (DuplexDriver, messaging.Destination, messaging.Source) {
 		return testkit.NewMemoryDriver(), messaging.Destination{Name: "contract"}, messaging.Source{Name: "contract"}
-	}, Options{})
+	}, Options{SynchronousPublish: true})
 }

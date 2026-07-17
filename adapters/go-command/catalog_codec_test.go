@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,52 @@ import (
 	command "github.com/goliatone/go-command"
 	messaging "github.com/goliatone/go-messaging"
 )
+
+type largeNumberMessage struct {
+	Signed   int64  `json:"signed"`
+	Unsigned uint64 `json:"unsigned"`
+}
+
+func TestCatalogCodecPreservesLargeIntegerValues(t *testing.T) {
+	registration := ingressRegistration{
+		id: "test.large", messageType: "test.large", kind: command.HandlerKindCommand,
+		request: reflect.TypeFor[largeNumberMessage](), newMessage: func() any { return &largeNumberMessage{} },
+	}
+	provider, err := command.NewMessageRegistrationIndex(registration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codec, err := NewJSONCatalogCodec(provider, JSONTypedCodec{}, CatalogBinding{
+		CatalogID: "large", RegistrationID: registration.ID(), Kind: registration.Kind(), SchemaVersion: "1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := largeNumberMessage{Signed: 1<<60 + 1, Unsigned: ^uint64(0)}
+	dto, err := codec.EncodeCatalog(context.Background(), registration, want, command.DispatchOptions{Mode: command.ExecutionModeInline})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := dto.Payload["signed"].(json.Number); !ok || got.String() != strconv.FormatInt(want.Signed, 10) {
+		t.Fatalf("signed payload=%#v", dto.Payload["signed"])
+	}
+	wire, err := json.Marshal(dto)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var received CatalogDispatchDTO
+	if unmarshalErr := json.Unmarshal(wire, &received); unmarshalErr != nil {
+		t.Fatal(unmarshalErr)
+	}
+	_, _, decoded, err := codec.DecodeCatalog(context.Background(), received, provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := decoded.(*largeNumberMessage)
+	if !ok || *got != want {
+		t.Fatalf("decoded=%#v want=%#v", decoded, want)
+	}
+}
 
 func TestCatalogCodecRoundTripsExplicitWireDTO(t *testing.T) {
 	registration := ingressRegistration{
@@ -211,9 +258,14 @@ func TestCatalogIngressAppliesTransportedDeadline(t *testing.T) {
 	envelope.CorrelationID = "correlation-1"
 	envelope.Timestamp = time.Now().Add(-2 * time.Second)
 	envelope.Deadline = time.Now().Add(-time.Second)
-	_, err = ingress.Execute(context.Background(), messaging.NewDelivery(envelope, messaging.DeliveryInfo{Attempt: 1}))
-	if !errors.Is(err, context.DeadlineExceeded) || called {
+	delivery := messaging.NewDelivery(envelope, messaging.DeliveryInfo{Attempt: 1})
+	_, err = ingress.Execute(context.Background(), delivery)
+	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, ErrEnvelopeDeadlineExpired) || called {
 		t.Fatalf("err=%v called=%v", err, called)
+	}
+	result := ingress.HandlerWith(DefaultErrorMapper{})(context.Background(), delivery)
+	if result.Disposition != messaging.DispositionReject || !errors.Is(result.Err, ErrEnvelopeDeadlineExpired) {
+		t.Fatalf("result=%#v", result)
 	}
 }
 

@@ -17,6 +17,7 @@ var (
 	ErrSubscriptionClosed     = errors.New("messaging: subscription closed")
 	ErrReplyTimeout           = errors.New("messaging: reply timeout")
 	ErrCorrelation            = errors.New("messaging: reply correlation failure")
+	ErrAcknowledgement        = errors.New("messaging: acknowledgement failure")
 	ErrUnsupportedDisposition = errors.New("messaging: unsupported disposition")
 	ErrDeadLetter             = errors.New("messaging: dead-letter failure")
 	ErrHandlerPanic           = errors.New("messaging: handler panic")
@@ -50,7 +51,7 @@ func safeObservationClass(err error) error {
 		ErrUnknownRoute, ErrUnknownDriver, ErrUnsupportedCapability,
 		ErrPublishRejected, ErrPublishAmbiguous, ErrNotPublished,
 		ErrSubscriptionNotReady, ErrSubscriptionClosed, ErrReplyTimeout,
-		ErrCorrelation, ErrUnsupportedDisposition, ErrDeadLetter,
+		ErrCorrelation, ErrAcknowledgement, ErrUnsupportedDisposition, ErrDeadLetter,
 		ErrHandlerPanic, context.Canceled, context.DeadlineExceeded,
 	} {
 		if errors.Is(err, candidate) {

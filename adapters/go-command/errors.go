@@ -9,12 +9,15 @@ import (
 	messaging "github.com/goliatone/go-messaging"
 )
 
+var ErrEnvelopeDeadlineExpired = errors.New("go-command adapter: transported envelope deadline expired")
+
 type ErrorMapper interface {
 	Map(error, int) messaging.HandleResult
 }
 
 type DefaultErrorMapper struct {
 	InvalidDisposition messaging.Disposition
+	ExpiredDisposition messaging.Disposition
 }
 
 func (m DefaultErrorMapper) Map(err error, attempt int) messaging.HandleResult {
@@ -27,14 +30,14 @@ func (m DefaultErrorMapper) Map(err error, attempt int) messaging.HandleResult {
 	if errors.Is(err, ErrClaimConflict) {
 		return messaging.Reject(err)
 	}
+	if errors.Is(err, ErrEnvelopeDeadlineExpired) {
+		return terminalDisposition(err, m.ExpiredDisposition)
+	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return messaging.Retry(err, 0)
 	}
 	if errors.Is(err, messaging.ErrInvalidEnvelope) || errors.Is(err, messaging.ErrSchemaMismatch) || errors.Is(err, messaging.ErrMessageTooLarge) {
-		if m.InvalidDisposition == messaging.DispositionDeadLetter {
-			return messaging.DeadLetter(err)
-		}
-		return messaging.Reject(err)
+		return terminalDisposition(err, m.InvalidDisposition)
 	}
 	var retryable *gerrors.RetryableError
 	if gerrors.As(err, &retryable) && retryable.IsRetryable() {
@@ -46,12 +49,23 @@ func (m DefaultErrorMapper) Map(err error, attempt int) messaging.HandleResult {
 	}
 	var structured *gerrors.Error
 	if gerrors.As(err, &structured) {
-		switch structured.Category {
-		case gerrors.CategoryValidation, gerrors.CategoryBadInput, gerrors.CategoryAuth, gerrors.CategoryAuthz, gerrors.CategoryNotFound, gerrors.CategoryConflict:
-			return messaging.Reject(err)
-		default:
-			return messaging.Retry(err, 0)
-		}
+		return mapStructuredError(err, structured)
 	}
 	return messaging.Retry(err, 0)
+}
+
+func terminalDisposition(err error, disposition messaging.Disposition) messaging.HandleResult {
+	if disposition == messaging.DispositionDeadLetter {
+		return messaging.DeadLetter(err)
+	}
+	return messaging.Reject(err)
+}
+
+func mapStructuredError(err error, structured *gerrors.Error) messaging.HandleResult {
+	switch structured.Category {
+	case gerrors.CategoryValidation, gerrors.CategoryBadInput, gerrors.CategoryAuth, gerrors.CategoryAuthz, gerrors.CategoryNotFound, gerrors.CategoryConflict:
+		return messaging.Reject(err)
+	default:
+		return messaging.Retry(err, 0)
+	}
 }

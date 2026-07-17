@@ -2,6 +2,7 @@ package commandadapter
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -131,6 +132,32 @@ func TestTypedIngressRejectsEventWithoutExplicitBinding(t *testing.T) {
 	}
 	if _, err := ingress.Execute(context.Background(), deliveryFor(messaging.KindEvent, "test.create", []byte(`{}`))); err == nil {
 		t.Fatal("expected event policy rejection")
+	}
+}
+
+func TestTypedIngressRejectsExpiredTransportedDeadlineWithoutReply(t *testing.T) {
+	registration := ingressRegistration{
+		id: "test.create", messageType: "test.create", kind: command.HandlerKindCommand,
+		request: reflect.TypeFor[createMessage](), newMessage: func() any { return &createMessage{} },
+	}
+	provider, err := command.NewMessageRegistrationIndex(registration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	ingress, err := NewTypedIngress(provider, executorFunc(func(context.Context, command.MessageRegistration, any, command.DispatchOptions) (command.DispatchOutcome, error) {
+		called = true
+		return command.DispatchOutcome{}, nil
+	}), JSONTypedCodec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope := messaging.NewEnvelope("expired", registration.MessageType(), messaging.KindCommand, "1", "application/json", []byte(`{"name":"Ada"}`), nil)
+	envelope.Timestamp = time.Now().Add(-2 * time.Second)
+	envelope.Deadline = time.Now().Add(-time.Second)
+	result := ingress.Handler(context.Background(), messaging.NewDelivery(envelope, messaging.DeliveryInfo{Attempt: 1}))
+	if called || result.Disposition != messaging.DispositionReject || !errors.Is(result.Err, ErrEnvelopeDeadlineExpired) {
+		t.Fatalf("called=%v result=%#v", called, result)
 	}
 }
 

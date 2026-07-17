@@ -2,6 +2,7 @@ package commandadapter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -114,7 +115,7 @@ func (i *TypedIngress) executeAs(ctx context.Context, delivery messaging.Deliver
 	defer cancel()
 	outcome, err := i.executor.ExecuteInbound(ctx, registration, message, options)
 	if err != nil {
-		return IngressResult{Registration: registration, Message: message}, err
+		return IngressResult{Registration: registration, Message: message}, classifyEnvelopeDeadline(envelope, err)
 	}
 	return IngressResult{Registration: registration, Message: message, Outcome: outcome}, nil
 }
@@ -123,17 +124,28 @@ func contextWithEnvelopeDeadline(ctx context.Context, envelope messaging.Envelop
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if !envelope.Deadline.IsZero() && !envelope.Deadline.After(time.Now()) {
+		return ctx, func() {}, expiredEnvelopeDeadline(context.DeadlineExceeded)
+	}
 	if err := ctx.Err(); err != nil {
 		return ctx, func() {}, err
 	}
 	if envelope.Deadline.IsZero() {
 		return ctx, func() {}, nil
 	}
-	if !envelope.Deadline.After(time.Now()) {
-		return ctx, func() {}, context.DeadlineExceeded
-	}
 	bounded, cancel := context.WithDeadline(ctx, envelope.Deadline)
 	return bounded, cancel, nil
+}
+
+func classifyEnvelopeDeadline(envelope messaging.Envelope, err error) error {
+	if err == nil || envelope.Deadline.IsZero() || !errors.Is(err, context.DeadlineExceeded) || time.Now().Before(envelope.Deadline) {
+		return err
+	}
+	return expiredEnvelopeDeadline(err)
+}
+
+func expiredEnvelopeDeadline(cause error) error {
+	return fmt.Errorf("%w: %w", ErrEnvelopeDeadlineExpired, cause)
 }
 
 // Handler adapts typed ingress to the transport-neutral delivery contract.

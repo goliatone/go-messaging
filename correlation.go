@@ -45,7 +45,7 @@ func NewCorrelationRegistry(capacity int, defaultTimeout time.Duration, observer
 	if len(observers) > 0 && observers[0] != nil {
 		observer = observers[0]
 	}
-	return &CorrelationRegistry{pending: make(map[string]*pendingReply), capacity: capacity, defaultTimeout: defaultTimeout, observer: observer}, nil
+	return &CorrelationRegistry{pending: make(map[string]*pendingReply), capacity: capacity, defaultTimeout: defaultTimeout, observer: protectObserver(observer)}, nil
 }
 
 // Register must be called before publishing the corresponding request.

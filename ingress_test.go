@@ -138,3 +138,25 @@ func TestIngressRejectsSchemaOutsideWirePolicy(t *testing.T) {
 		t.Fatalf("rejected observation = %#v", got)
 	}
 }
+
+func TestIngressObserverPanicDoesNotChangeHandlerDisposition(t *testing.T) {
+	driver := &consumeStub{}
+	registry, err := NewDriverRegistry(map[string]Driver{"consumer": driver})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ingress, err := NewIngress(registry, []IngressBinding{{
+		Name: "events", LogicalRoute: "events", Driver: "consumer", Source: Source{Name: "events"},
+		Handlers: []Handler{func(context.Context, Delivery) HandleResult { return Retry(context.DeadlineExceeded, 0) }},
+	}}, WithIngressObserver(ObserverFunc(func(context.Context, Observation) { panic("observer failed") })))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ingress.Subscribe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	result := driver.handler(context.Background(), NewDelivery(validEnvelope(), DeliveryInfo{Attempt: 2}))
+	if result.Disposition != DispositionRetry || !errors.Is(result.Err, context.DeadlineExceeded) {
+		t.Fatalf("result=%#v", result)
+	}
+}

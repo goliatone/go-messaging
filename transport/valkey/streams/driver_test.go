@@ -112,6 +112,51 @@ func TestMissingPendingMetadataIsNotTreatedAsFirstAttempt(t *testing.T) {
 	}
 }
 
+func TestAckCountMustConfirmExactlyOneEntry(t *testing.T) {
+	if err := validateAckCount("1-0", 1); err != nil {
+		t.Fatal(err)
+	}
+	for _, count := range []int64{0, 2} {
+		err := validateAckCount("1-0", count)
+		if !errors.Is(err, messaging.ErrAcknowledgement) {
+			t.Fatalf("count=%d err=%v", count, err)
+		}
+	}
+}
+
+func TestAckRejectsAlreadySettledEntry(t *testing.T) {
+	address := requireValkeyAddress(t)
+	driver, err := New(DefaultConfig(address))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if startErr := driver.Start(ctx); startErr != nil {
+		t.Fatal(startErr)
+	}
+	cleanupDriver(t, driver)
+	stream := "ack-count-" + time.Now().Format("150405.000000000")
+	group := "workers"
+	if createErr := driver.client.Do(ctx, driver.client.B().XgroupCreate().Key(stream).Group(group).Id("0").Mkstream().Build()).Error(); createErr != nil {
+		t.Fatal(createErr)
+	}
+	id, err := driver.client.Do(ctx, driver.client.B().Xadd().Key(stream).Id("*").FieldValue().FieldValue(envelopeField, "value").Build()).ToString()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readErr := driver.client.Do(ctx, driver.client.B().Xreadgroup().Group(group, "one").Count(1).Streams().Key(stream).Id(">").Build()).Error(); readErr != nil {
+		t.Fatal(readErr)
+	}
+	sub := &subscription{client: driver.client, source: messaging.Source{Name: stream, Group: group}}
+	if ackErr := sub.ack(ctx, id); ackErr != nil {
+		t.Fatal(ackErr)
+	}
+	if ackErr := sub.ack(ctx, id); !errors.Is(ackErr, messaging.ErrAcknowledgement) {
+		t.Fatalf("second ack err=%v", ackErr)
+	}
+}
+
 type settlementStub struct {
 	ackErr          error
 	ackCalls        int

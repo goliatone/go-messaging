@@ -113,6 +113,13 @@ func (d *Driver) Publish(ctx context.Context, destination messaging.Destination,
 	if strings.TrimSpace(destination.Name) == "" {
 		return messaging.PublishResult{Outcome: messaging.PublishRejected}, fmt.Errorf("%w: empty stream", messaging.ErrPublishRejected)
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		outcome, classified := shared.PublicationFailure("xadd", ctxErr, false)
+		return messaging.PublishResult{Outcome: outcome}, classified
+	}
 	d.mu.Lock()
 	client := d.client
 	closed := d.closed
@@ -122,23 +129,25 @@ func (d *Driver) Publish(ctx context.Context, destination messaging.Destination,
 	}
 	data, err := d.config.Codec.Encode(ctx, envelope.Clone())
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			outcome, classified := shared.PublicationFailure("xadd", ctxErr, false)
+			return messaging.PublishResult{Outcome: outcome}, classified
+		}
 		return messaging.PublishResult{Outcome: messaging.PublishRejected}, err
 	}
 	if len(data) > d.config.Valkey.MaxMessageBytes {
 		return messaging.PublishResult{Outcome: messaging.PublishRejected}, messaging.ErrMessageTooLarge
 	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		outcome, classified := shared.PublicationFailure("xadd", ctxErr, false)
+		return messaging.PublishResult{Outcome: outcome}, classified
+	}
 	id, err := client.Do(ctx, client.B().Xadd().Key(destination.Name).Id("*").FieldValue().FieldValue(envelopeField, string(data)).Build()).ToString()
 	if err != nil {
-		return messaging.PublishResult{Outcome: classifyPublish(err)}, shared.Classify("xadd", err)
+		outcome, classified := shared.PublicationFailure("xadd", err, true)
+		return messaging.PublishResult{Outcome: outcome}, classified
 	}
 	return messaging.PublishResult{Outcome: messaging.PublishAccepted, Transport: "valkey.streams", Destination: destination.Name, ProviderMessageID: id}, nil
-}
-
-func classifyPublish(err error) messaging.PublishOutcome {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, valkey.ErrClosing) {
-		return messaging.PublishDefinitelyNotPublished
-	}
-	return messaging.PublishAmbiguous
 }
 
 func (d *Driver) Subscribe(ctx context.Context, source messaging.Source, handler messaging.Handler) (messaging.Subscription, error) {
@@ -362,11 +371,25 @@ func parseDeliveryCount(id string, entries []valkey.ValkeyMessage) (int64, error
 	return count, nil
 }
 func (s *subscription) ack(ctx context.Context, id string) error {
-	_, err := s.client.Do(ctx, s.client.B().Xack().Key(s.source.Name).Group(s.source.Group).Id(id).Build()).AsInt64()
+	count, err := s.client.Do(ctx, s.client.B().Xack().Key(s.source.Name).Group(s.source.Group).Id(id).Build()).AsInt64()
 	if err != nil {
-		return shared.Classify("xack", err)
+		return &messaging.TransportError{
+			Class: messaging.ErrAcknowledgement, Transport: "valkey.streams",
+			Operation: "xack", Temporary: true, Cause: err,
+		}
 	}
-	return nil
+	return validateAckCount(id, count)
+}
+
+func validateAckCount(id string, count int64) error {
+	if count == 1 {
+		return nil
+	}
+	return &messaging.TransportError{
+		Class: messaging.ErrAcknowledgement, Transport: "valkey.streams",
+		Operation: "xack", Temporary: count == 0,
+		Cause: fmt.Errorf("valkey acknowledged %d entries for delivery %q", count, id),
+	}
 }
 func (s *subscription) deadLetter(ctx context.Context, id, raw string, reason error) error {
 	message := safeDeadLetterReason(reason)

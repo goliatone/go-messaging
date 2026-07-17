@@ -1,6 +1,7 @@
 package commandadapter
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -21,6 +22,14 @@ func TestDefaultErrorMapperClassifiesWithoutInspectingPayloads(t *testing.T) {
 	}
 	if got := mapper.Map(ErrClaimInProgress, 1); got.Disposition != messaging.DispositionRetry {
 		t.Fatalf("claim disposition %#v", got)
+	}
+	expired := expiredEnvelopeDeadline(context.DeadlineExceeded)
+	if got := mapper.Map(expired, 1); got.Disposition != messaging.DispositionReject {
+		t.Fatalf("expired disposition %#v", got)
+	}
+	deadLetterMapper := DefaultErrorMapper{ExpiredDisposition: messaging.DispositionDeadLetter}
+	if got := deadLetterMapper.Map(expired, 1); got.Disposition != messaging.DispositionDeadLetter {
+		t.Fatalf("expired dead-letter disposition %#v", got)
 	}
 	if got := mapper.Map(errors.New("unknown"), 1); got.Disposition != messaging.DispositionRetry {
 		t.Fatalf("unknown disposition %#v", got)

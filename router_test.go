@@ -131,3 +131,22 @@ func TestRouterClassifiesReplyObservation(t *testing.T) {
 		t.Fatalf("observation = %#v", observation)
 	}
 }
+
+func TestRouterContainsObserverPanicAfterAcceptedPublish(t *testing.T) {
+	driver := &publishStub{}
+	registry, err := NewDriverRegistry(map[string]Driver{"one": driver})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := NewRouter(registry, []Route{{
+		Name: "events", Strategy: StrategyPrimary,
+		Bindings: []RouteBinding{{Driver: "one", Destination: Destination{Name: "events"}}},
+	}}, ObserverFunc(func(context.Context, Observation) { panic("observer failed") }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := r.Publish(context.Background(), "events", validEnvelope())
+	if err != nil || len(result.Results) != 1 || result.Results[0].Outcome != PublishAccepted || driver.calls != 1 {
+		t.Fatalf("result=%#v err=%v calls=%d", result, err, driver.calls)
+	}
+}
