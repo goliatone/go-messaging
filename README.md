@@ -77,4 +77,4 @@ Preview a synchronized release without changing files, refs, or remotes:
 ./taskfile release:dry-run 0.2.0
 ```
 
-The plan validates semantic import-version rules, lists only present nested-module tags, preserves the reviewed `go-command` requirement, and prints the atomic push refspec.
+Before an actual release, `./taskfile release:preflight` verifies the branch and tracked tree, rejects stale untracked `.version`/`CHANGELOG.md` outputs, and checks `git-cliff` plus the `origin` remote. The dry-run validates semantic import-version rules, lists only present nested-module tags, preserves the reviewed `go-command` requirement, and prints the atomic push refspec.

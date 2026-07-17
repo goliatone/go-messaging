@@ -110,6 +110,8 @@ replyIngress, err := messaging.NewIngress(drivers, []messaging.IngressBinding{{
     Name: "command-replies", LogicalRoute: "command-replies",
     Driver: "commands", Source: messaging.Source{Name: "command-replies"},
     AcceptedKinds: []messaging.Kind{messaging.KindReply},
+    AcceptedContentTypes: []string{(commandadapter.JSONReplyCodec{}).ContentType()},
+    AcceptedSchemas: []string{"1"},
     Handlers: []messaging.Handler{remote.HandleReply},
 }})
 if err != nil {
@@ -143,6 +145,8 @@ commandIngress, err := messaging.NewIngress(drivers, []messaging.IngressBinding{
     Driver: "commands",
     Source: messaging.Source{Name: "commands", Group: "workers", Consumer: workerID},
     AcceptedKinds: []messaging.Kind{messaging.KindCommand, messaging.KindQuery},
+    AcceptedContentTypes: []string{"application/json"},
+    AcceptedSchemas: []string{"1"},
     Handlers: []messaging.Handler{worker.Handler},
 }})
 if err != nil {
