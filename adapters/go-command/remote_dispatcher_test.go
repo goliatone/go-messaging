@@ -134,6 +134,30 @@ func TestRemoteDispatcherRequiresReplyPath(t *testing.T) {
 	}
 }
 
+func TestRemoteDispatcherRejectsRouteThatDoesNotAcceptReplies(t *testing.T) {
+	driver := newRemoteTestDriver()
+	driver.publish = func(context.Context, messaging.Destination, messaging.Envelope) (messaging.PublishResult, error) {
+		t.Fatal("publish should not run")
+		return messaging.PublishResult{}, nil
+	}
+	registry, err := messaging.NewDriverRegistry(map[string]messaging.Driver{"remote": driver})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router, err := messaging.NewRouter(registry, []messaging.Route{
+		{Name: "request", Strategy: messaging.StrategyPrimary, Bindings: []messaging.RouteBinding{{Driver: "remote", Destination: messaging.Destination{Name: "requests"}}}},
+		{Name: "reply", Strategy: messaging.StrategyPrimary, Kinds: []messaging.Kind{messaging.KindCommand}, Bindings: []messaging.RouteBinding{{Driver: "remote", Destination: messaging.Destination{Name: "replies"}}}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := newTestRemoteDispatcher(t, RemoteDispatcherConfig{Router: router, Correlations: newTestCorrelationRegistry(t, 1), ReplyRoute: "reply"})
+	err = remote.ValidateRoutes(command.DispatchRoute{Target: command.DispatchTargetRemote, Name: "request"})
+	if !errors.Is(err, messaging.ErrUnsupportedCapability) {
+		t.Fatalf("got %v", err)
+	}
+}
+
 func newTestCorrelationRegistry(t *testing.T, capacity int) *messaging.CorrelationRegistry {
 	t.Helper()
 	registry, err := messaging.NewCorrelationRegistry(capacity, time.Second)

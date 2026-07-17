@@ -136,6 +136,41 @@ replace github.com/goliatone/go-messaging => ../..
 	}
 }
 
+func TestReleasePreflightRejectsUntrackedManagedOutputs(t *testing.T) {
+	for _, name := range []string{".version", "CHANGELOG.md"} {
+		t.Run(name, func(t *testing.T) {
+			sandbox := releaseSandbox(t)
+			writeFile(t, sandbox, name, []byte("stale\n"), 0o644)
+			command := taskCommand(t, sandbox, "release:preflight")
+			output, err := command.CombinedOutput()
+			if err == nil || !bytes.Contains(output, []byte("Untracked release-managed output exists")) {
+				t.Fatalf("preflight did not reject %s: err=%v\n%s", name, err, output)
+			}
+		})
+	}
+}
+
+func TestReleasePreflightReportsMissingToolAndRemote(t *testing.T) {
+	t.Run("git-cliff", func(t *testing.T) {
+		sandbox := releaseSandbox(t)
+		command := taskCommand(t, sandbox, "release:preflight")
+		command.Env = append(os.Environ(), "GIT_CLIFF_BIN=missing-git-cliff-for-test")
+		output, err := command.CombinedOutput()
+		if err == nil || !bytes.Contains(output, []byte("git-cliff is required")) {
+			t.Fatalf("preflight did not report missing git-cliff: err=%v\n%s", err, output)
+		}
+	})
+	t.Run("origin", func(t *testing.T) {
+		sandbox := releaseSandbox(t)
+		command := taskCommand(t, sandbox, "release:preflight")
+		command.Env = append(os.Environ(), "GIT_CLIFF_BIN=/usr/bin/true")
+		output, err := command.CombinedOutput()
+		if err == nil || !bytes.Contains(output, []byte("remote 'origin' is not configured")) {
+			t.Fatalf("preflight did not report missing origin: err=%v\n%s", err, output)
+		}
+	})
+}
+
 func repositoryRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
@@ -152,6 +187,32 @@ func taskCommand(t *testing.T, repository string, arguments ...string) *exec.Cmd
 	command := exec.CommandContext(ctx, filepath.Join(repository, "taskfile"), arguments...)
 	command.Dir = repository
 	return command
+}
+
+func releaseSandbox(t *testing.T) string {
+	t.Helper()
+	repository := repositoryRoot(t)
+	sandbox := t.TempDir()
+	taskfile, err := os.ReadFile(filepath.Join(repository, "taskfile"))
+	if err != nil {
+		t.Fatalf("read taskfile: %v", err)
+	}
+	writeFile(t, sandbox, "taskfile", taskfile, 0o755)
+	runGit(t, sandbox, "init", "-b", "main")
+	runGit(t, sandbox, "add", "taskfile")
+	runGit(t, sandbox, "-c", "user.name=Release Test", "-c", "user.email=release@example.test", "commit", "-m", "initial")
+	return sandbox
+}
+
+func runGit(t *testing.T, directory string, arguments ...string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, "git", arguments...)
+	command.Dir = directory
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(arguments, " "), err, output)
+	}
 }
 
 func readFiles(t *testing.T, root string, names []string) map[string][]byte {

@@ -9,10 +9,7 @@ import (
 )
 
 func TestPubSubContract(t *testing.T) {
-	address := os.Getenv("VALKEY_ADDRESS")
-	if address == "" {
-		t.Skip("VALKEY_ADDRESS is required for the Pub/Sub contract suite")
-	}
+	address := requireValkeyAddress(t)
 	contracttest.Run(t, func(t *testing.T) (contracttest.DuplexDriver, messaging.Destination, messaging.Source) {
 		config := DefaultConfig(address)
 		driver, err := New(config)
@@ -21,6 +18,19 @@ func TestPubSubContract(t *testing.T) {
 		}
 		return driver, messaging.Destination{Name: "contract"}, messaging.Source{Name: "contract"}
 	}, contracttest.Options{})
+}
+
+func requireValkeyAddress(t *testing.T) string {
+	t.Helper()
+	address := os.Getenv("VALKEY_ADDRESS")
+	if address != "" {
+		return address
+	}
+	if os.Getenv("CI") != "" {
+		t.Fatal("VALKEY_ADDRESS is required in CI")
+	}
+	t.Skip("VALKEY_ADDRESS is required for the Pub/Sub contract suite")
+	return ""
 }
 
 func TestCapabilitiesAreEphemeral(t *testing.T) {

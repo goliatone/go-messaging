@@ -49,3 +49,33 @@ func TestReplyingIngressPublishesExecutingProcessOutcome(t *testing.T) {
 		t.Fatalf("decoded=%#v err=%v", decoded, err)
 	}
 }
+
+func TestReplyingIngressPublishesFailureBeforeRegistrationResolution(t *testing.T) {
+	registration := ingressRegistration{
+		id: "test.lookup", messageType: "test.lookup", kind: command.HandlerKindQuery,
+		request: reflect.TypeFor[lookupMessage](), result: reflect.TypeFor[string](),
+		newMessage: func() any { return &lookupMessage{} },
+	}
+	driver := newRemoteTestDriver()
+	var reply messaging.Envelope
+	driver.publish = func(_ context.Context, _ messaging.Destination, envelope messaging.Envelope) (messaging.PublishResult, error) {
+		reply = envelope
+		return messaging.PublishResult{Outcome: messaging.PublishAccepted}, nil
+	}
+	worker := ReplyingIngress{
+		Ingress: ingressFunc(func(context.Context, messaging.Delivery) (IngressResult, error) {
+			return IngressResult{}, command.NewRegistrationNotFoundError(command.HandlerKindQuery, "missing")
+		}),
+		Replies: ReplyPublisher{Router: remoteTestRouter(t, driver, false)},
+	}
+	request := messaging.NewEnvelope("request-early-failure", registration.MessageType(), messaging.KindQuery, "1", "application/json", []byte(`{}`), nil)
+	request.CorrelationID = "correlation-early-failure"
+	request.ReplyTo = "reply"
+	result := worker.Handler(context.Background(), messaging.NewDelivery(request, messaging.DeliveryInfo{Attempt: 1}))
+	if result.Disposition != messaging.DispositionComplete || reply.Kind != messaging.KindReply {
+		t.Fatalf("result=%#v reply=%#v", result, reply)
+	}
+	if _, err := (JSONReplyCodec{}).Decode(context.Background(), registration, reply); err == nil {
+		t.Fatal("expected structured remote failure")
+	}
+}

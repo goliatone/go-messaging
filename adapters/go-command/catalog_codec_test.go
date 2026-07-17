@@ -3,6 +3,7 @@ package commandadapter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -172,6 +173,47 @@ func TestCatalogIngressRequiresExplicitEventAuthorizationAndUsesPolicyExecutor(t
 	}
 	if !called {
 		t.Fatal("policy executor did not receive canonical typed dispatch")
+	}
+}
+
+func TestCatalogIngressAppliesTransportedDeadline(t *testing.T) {
+	registration := ingressRegistration{
+		id: "test.create", messageType: "test.create", kind: command.HandlerKindCommand,
+		request: reflect.TypeFor[createMessage](), newMessage: func() any { return &createMessage{} },
+	}
+	provider, err := command.NewMessageRegistrationIndex(registration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codec, err := NewJSONCatalogCodec(provider, JSONTypedCodec{}, CatalogBinding{
+		CatalogID: "create", RegistrationID: "test.create", Kind: command.HandlerKindCommand, SchemaVersion: "1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dto := CatalogDispatchDTO{
+		Version: CatalogWireVersion, SchemaVersion: "1", CommandID: "create", HandlerKind: string(command.HandlerKindCommand),
+		Payload: map[string]any{"name": "Ada"}, Options: CatalogOptionsDTO{Mode: "inline", CorrelationID: "correlation-1"},
+	}
+	payload, err := json.Marshal(dto)
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	ingress, err := NewCatalogIngress(provider, codec, catalogExecutorFunc(func(context.Context, command.CommandDispatchRequest, command.MessageRegistration, any, IngressMetadata) (command.DispatchOutcome, error) {
+		called = true
+		return command.DispatchOutcome{}, nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope := messaging.NewEnvelope("expired", CatalogEnvelopeType, messaging.KindCommand, "1", "application/json", payload, nil)
+	envelope.CorrelationID = "correlation-1"
+	envelope.Timestamp = time.Now().Add(-2 * time.Second)
+	envelope.Deadline = time.Now().Add(-time.Second)
+	_, err = ingress.Execute(context.Background(), messaging.NewDelivery(envelope, messaging.DeliveryInfo{Attempt: 1}))
+	if !errors.Is(err, context.DeadlineExceeded) || called {
+		t.Fatalf("err=%v called=%v", err, called)
 	}
 }
 
