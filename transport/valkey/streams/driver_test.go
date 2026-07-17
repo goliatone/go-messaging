@@ -49,13 +49,20 @@ func TestRetryDeadLettersAfterLimit(t *testing.T) {
 	config.ClaimInterval = 10 * time.Millisecond
 	config.Block = 20 * time.Millisecond
 	config.MaxDeliveries = 2
-	driver, _ := New(config)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	if err := driver.Start(ctx); err != nil {
+	driver, err := New(config)
+	if err != nil {
 		t.Fatal(err)
 	}
-	defer driver.Close(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if startErr := driver.Start(ctx); startErr != nil {
+		t.Fatal(startErr)
+	}
+	t.Cleanup(func() {
+		if closeErr := driver.Close(context.Background()); closeErr != nil {
+			t.Errorf("close driver: %v", closeErr)
+		}
+	})
 	name := "retry-" + time.Now().Format("150405.000000000")
 	attempts := make(chan int, 4)
 	sub, err := driver.Subscribe(ctx, messaging.Source{Name: name, Group: "workers", Consumer: "one", From: "0"}, func(_ context.Context, d messaging.Delivery) messaging.HandleResult {
@@ -65,13 +72,17 @@ func TestRetryDeadLettersAfterLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer sub.Close(context.Background())
+	t.Cleanup(func() {
+		if closeErr := sub.Close(context.Background()); closeErr != nil {
+			t.Errorf("close subscription: %v", closeErr)
+		}
+	})
 	<-sub.Ready()
 	envelope := messaging.NewEnvelope("retry-1", "job", messaging.KindEvent, "1", "application/json", []byte(`{}`), nil)
 	if _, err := driver.Publish(ctx, messaging.Destination{Name: name}, envelope); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		select {
 		case <-attempts:
 		case <-ctx.Done():
