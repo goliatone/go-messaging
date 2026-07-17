@@ -176,6 +176,9 @@ func (r *Router) publishBinding(ctx context.Context, route Route, binding RouteB
 	}
 	started := time.Now()
 	result, err := publisher.Publish(ctx, binding.Destination, envelope.Clone())
+	if err == nil {
+		err = result.OutcomeError()
+	}
 	operation := OperationPublish
 	if envelope.Kind == KindReply {
 		operation = OperationReply
