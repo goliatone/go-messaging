@@ -89,3 +89,26 @@ func TestCorrelationExplicitCancelAndSingleAwait(t *testing.T) {
 		t.Fatalf("second await got %v", err)
 	}
 }
+
+func TestCorrelationObservesMatchedAndLateReplies(t *testing.T) {
+	var observations []Observation
+	r, err := NewCorrelationRegistry(1, time.Second, ObserverFunc(func(_ context.Context, observation Observation) {
+		observations = append(observations, observation)
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Register("corr", "reply", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	reply := validEnvelope()
+	reply.Kind = KindReply
+	reply.Type = "reply"
+	reply.CorrelationID = "corr"
+	if !r.Deliver(reply) || r.Deliver(reply) {
+		t.Fatal("expected one matched and one duplicate reply")
+	}
+	if len(observations) != 2 || observations[0].Operation != OperationReply || observations[0].Outcome != "matched" || observations[1].Outcome != "unknown_or_duplicate" || !errors.Is(observations[1].Err, ErrCorrelation) {
+		t.Fatalf("observations = %#v", observations)
+	}
+}

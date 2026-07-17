@@ -107,3 +107,27 @@ func TestDriverReplacementCannotPanicRouter(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestRouterClassifiesReplyObservation(t *testing.T) {
+	driver := &publishStub{}
+	registry, err := NewDriverRegistry(map[string]Driver{"one": driver})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var observation Observation
+	r, err := NewRouter(registry, []Route{{Name: "replies", Strategy: StrategyPrimary, Kinds: []Kind{KindReply}, Bindings: []RouteBinding{{Driver: "one", Destination: Destination{Name: "replies"}}}}}, ObserverFunc(func(_ context.Context, got Observation) {
+		observation = got
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply := validEnvelope()
+	reply.Kind = KindReply
+	reply.CorrelationID = "corr"
+	if _, err := r.Publish(context.Background(), "replies", reply); err != nil {
+		t.Fatal(err)
+	}
+	if observation.Operation != OperationReply || observation.LogicalRoute != "replies" || observation.Transport != "one" || observation.Destination != "replies" || observation.CorrelationID != "corr" {
+		t.Fatalf("observation = %#v", observation)
+	}
+}
