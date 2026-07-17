@@ -15,12 +15,18 @@ func TestTypedIngressPropagatesBoundedDeliveryProvenance(t *testing.T) {
 		id: "test.create", messageType: "test.create", kind: command.HandlerKindCommand,
 		request: reflect.TypeFor[createMessage](), newMessage: func() any { return &createMessage{} },
 	}
-	provider, _ := command.NewMessageRegistrationIndex(registration)
+	provider, err := command.NewMessageRegistrationIndex(registration)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var got command.DispatchProvenance
-	ingress, _ := NewTypedIngress(provider, executorFunc(func(ctx context.Context, _ command.MessageRegistration, _ any, _ command.DispatchOptions) (command.DispatchOutcome, error) {
+	ingress, err := NewTypedIngress(provider, executorFunc(func(ctx context.Context, _ command.MessageRegistration, _ any, _ command.DispatchOptions) (command.DispatchOutcome, error) {
 		got, _ = command.DispatchProvenanceFromContext(ctx)
 		return command.DispatchOutcome{}, nil
 	}), JSONTypedCodec{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	ingress = ingress.ForRoute("commands")
 	envelope := messaging.NewEnvelope("envelope-1", "test.create", messaging.KindCommand, "1", "application/json", []byte(`{"name":"Ada"}`), nil)
 	envelope.CorrelationID = "correlation-1"

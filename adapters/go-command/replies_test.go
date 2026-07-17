@@ -90,7 +90,7 @@ func TestReplyCodecPreservesRetryClassificationWithoutExposingMessage(t *testing
 	reply := messaging.NewEnvelope("reply-1", registration.MessageType(), messaging.KindReply, "1", codec.ContentType(), payload, nil)
 	_, err = codec.Decode(context.Background(), registration, reply)
 	var retryable *gerrors.RetryableError
-	if !gerrors.As(err, &retryable) || !retryable.IsRetryable() || retryable.BaseError.TextCode != "WORKER_UNAVAILABLE" {
+	if !gerrors.As(err, &retryable) || !retryable.IsRetryable() || retryable.TextCode != "WORKER_UNAVAILABLE" {
 		t.Fatalf("retry classification lost: %v", err)
 	}
 }

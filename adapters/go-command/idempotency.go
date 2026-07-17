@@ -72,42 +72,57 @@ func (e GuardedIngressExecutor) ExecuteInbound(ctx context.Context, registration
 	if key == "" || e.Store == nil || isTypedNil(e.Store) {
 		return e.Next.ExecuteInbound(ctx, registration, message, options)
 	}
+	result, err := e.claim(ctx, registration, message, options, key)
+	if err != nil {
+		return command.DispatchOutcome{}, err
+	}
+	if outcome, resolved, err := resolveClaim(result, key, options.CorrelationID); resolved {
+		return outcome, err
+	}
+	return e.executeClaimed(ctx, registration, message, options, result.Token)
+}
+
+func (e GuardedIngressExecutor) claim(ctx context.Context, registration command.MessageRegistration, message any, options command.DispatchOptions, key string) (ClaimResult, error) {
 	codec := e.Codec
 	if codec == nil || isTypedNil(codec) {
 		codec = JSONTypedCodec{}
 	}
 	payload, err := codec.Encode(ctx, registration, message)
 	if err != nil {
-		return command.DispatchOutcome{}, err
+		return ClaimResult{}, err
 	}
 	digest := sha256.Sum256(append([]byte(registration.ID()+"\x00"), payload...))
 	claim := Claim{
 		Key: key, Fingerprint: hex.EncodeToString(digest[:]),
 		RegistrationID: registration.ID(), CorrelationID: options.CorrelationID,
 	}
-	result, err := e.Store.Claim(ctx, claim)
-	if err != nil {
-		return command.DispatchOutcome{}, err
-	}
+	return e.Store.Claim(ctx, claim)
+}
+
+func resolveClaim(result ClaimResult, key, correlationID string) (command.DispatchOutcome, bool, error) {
 	switch result.Status {
 	case ClaimCompleted:
 		if result.Outcome == nil {
-			return command.DispatchOutcome{}, fmt.Errorf("go-command adapter: completed idempotency claim has no outcome")
+			return command.DispatchOutcome{}, true, fmt.Errorf("go-command adapter: completed idempotency claim has no outcome")
 		}
 		replayed := *result.Outcome
-		replayed.Receipt.CorrelationID = options.CorrelationID
-		return replayed, nil
+		replayed.Receipt.CorrelationID = correlationID
+		return replayed, true, nil
 	case ClaimInProgress:
-		return command.DispatchOutcome{}, ErrClaimInProgress
+		return command.DispatchOutcome{}, true, ErrClaimInProgress
 	case ClaimConflict:
-		return command.DispatchOutcome{}, ErrClaimConflict
+		return command.DispatchOutcome{}, true, ErrClaimConflict
 	case ClaimAcquired:
 		if strings.TrimSpace(result.Token.Key) != key || strings.TrimSpace(result.Token.Token) == "" {
-			return command.DispatchOutcome{}, fmt.Errorf("go-command adapter: acquired claim requires a fencing token")
+			return command.DispatchOutcome{}, true, fmt.Errorf("go-command adapter: acquired claim requires a fencing token")
 		}
+		return command.DispatchOutcome{}, false, nil
 	default:
-		return command.DispatchOutcome{}, fmt.Errorf("go-command adapter: invalid claim status %q", result.Status)
+		return command.DispatchOutcome{}, true, fmt.Errorf("go-command adapter: invalid claim status %q", result.Status)
 	}
+}
+
+func (e GuardedIngressExecutor) executeClaimed(ctx context.Context, registration command.MessageRegistration, message any, options command.DispatchOptions, token ClaimToken) (command.DispatchOutcome, error) {
 	outcome, executeErr := e.Next.ExecuteInbound(ctx, registration, message, options)
 	cleanupTimeout := e.CleanupTimeout
 	if cleanupTimeout <= 0 {
@@ -116,12 +131,12 @@ func (e GuardedIngressExecutor) ExecuteInbound(ctx context.Context, registration
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 	defer cancel()
 	if executeErr != nil {
-		if releaseErr := e.Store.Release(cleanupCtx, result.Token); releaseErr != nil {
+		if releaseErr := e.Store.Release(cleanupCtx, token); releaseErr != nil {
 			return command.DispatchOutcome{}, errors.Join(executeErr, releaseErr)
 		}
 		return command.DispatchOutcome{}, executeErr
 	}
-	if err := e.Store.Complete(cleanupCtx, Completion{Token: result.Token, Outcome: outcome}); err != nil {
+	if err := e.Store.Complete(cleanupCtx, Completion{Token: token, Outcome: outcome}); err != nil {
 		return command.DispatchOutcome{}, err
 	}
 	return outcome, nil

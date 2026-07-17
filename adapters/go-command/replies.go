@@ -121,9 +121,9 @@ func failureFromError(err error) *FailureDTO {
 	failure := &FailureDTO{Category: string(gerrors.CategoryInternal), Message: "remote command execution failed"}
 	var retryable *gerrors.RetryableError
 	if gerrors.As(err, &retryable) && retryable.BaseError != nil {
-		failure.Category = string(retryable.BaseError.Category)
-		failure.Code = retryable.BaseError.Code
-		failure.TextCode = retryable.BaseError.TextCode
+		failure.Category = string(retryable.Category)
+		failure.Code = retryable.Code
+		failure.TextCode = retryable.TextCode
 		failure.Retryable = retryable.IsRetryable()
 		failure.RetryAfterNanos = retryable.RetryDealy(1).Nanoseconds()
 		return failure
@@ -149,10 +149,10 @@ func errorFromFailure(failure FailureDTO) error {
 	if failure.Retryable {
 		err := gerrors.NewRetryable(message, category).WithRetryDelay(time.Duration(failure.RetryAfterNanos))
 		if failure.Code != 0 {
-			err.WithCode(failure.Code)
+			err = err.WithCode(failure.Code)
 		}
 		if failure.TextCode != "" {
-			err.WithTextCode(failure.TextCode)
+			err = err.WithTextCode(failure.TextCode)
 		}
 		return err
 	}
