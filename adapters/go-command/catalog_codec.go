@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	CatalogWireVersion = "1"
+	CatalogWireVersion  = "1"
 	CatalogEnvelopeType = "go-command.catalog"
 )
 
@@ -53,9 +53,9 @@ type CatalogCodec interface {
 }
 
 type JSONCatalogCodec struct {
-	byCatalogID     map[catalogBindingKey]CatalogBinding
-	byRegistration  map[catalogBindingKey]CatalogBinding
-	typed            TypedCodec
+	byCatalogID    map[catalogBindingKey]CatalogBinding
+	byRegistration map[catalogBindingKey]CatalogBinding
+	typed          TypedCodec
 }
 
 type catalogBindingKey struct {
@@ -76,40 +76,55 @@ func NewJSONCatalogCodec(provider command.RegistrationProvider, typed TypedCodec
 		typed:          typed,
 	}
 	for _, binding := range bindings {
-		binding.CatalogID = strings.TrimSpace(binding.CatalogID)
-		binding.RegistrationID = strings.TrimSpace(binding.RegistrationID)
-		binding.SchemaVersion = strings.TrimSpace(binding.SchemaVersion)
-		if binding.CatalogID == "" {
-			binding.CatalogID = binding.RegistrationID
-		}
-		if binding.CatalogID == "" || binding.RegistrationID == "" || binding.SchemaVersion == "" {
-			return nil, fmt.Errorf("go-command adapter: catalog id, registration id, and schema version are required")
-		}
-		if binding.Kind != command.HandlerKindCommand && binding.Kind != command.HandlerKindQuery {
-			return nil, fmt.Errorf("go-command adapter: invalid catalog handler kind %q", binding.Kind)
-		}
-		if binding.AllowEventToCommand && binding.Kind != command.HandlerKindCommand {
-			return nil, fmt.Errorf("go-command adapter: event reinterpretation requires a command binding")
-		}
-		registration, ok := provider.RegistrationByID(binding.Kind, binding.RegistrationID)
-		if !ok {
-			return nil, command.NewRegistrationNotFoundError(binding.Kind, binding.RegistrationID)
-		}
-		if err := validateRegistration(registration); err != nil {
+		normalized, err := normalizeCatalogBinding(provider, binding)
+		if err != nil {
 			return nil, err
 		}
-		catalogKey := catalogBindingKey{kind: binding.Kind, id: binding.CatalogID}
-		registrationKey := catalogBindingKey{kind: binding.Kind, id: binding.RegistrationID}
-		if _, exists := codec.byCatalogID[catalogKey]; exists {
-			return nil, fmt.Errorf("go-command adapter: ambiguous catalog id %q for %s", binding.CatalogID, binding.Kind)
+		if err := codec.addBinding(normalized); err != nil {
+			return nil, err
 		}
-		if _, exists := codec.byRegistration[registrationKey]; exists {
-			return nil, fmt.Errorf("go-command adapter: ambiguous registration mapping %q for %s", binding.RegistrationID, binding.Kind)
-		}
-		codec.byCatalogID[catalogKey] = binding
-		codec.byRegistration[registrationKey] = binding
 	}
 	return codec, nil
+}
+
+func normalizeCatalogBinding(provider command.RegistrationProvider, binding CatalogBinding) (CatalogBinding, error) {
+	binding.CatalogID = strings.TrimSpace(binding.CatalogID)
+	binding.RegistrationID = strings.TrimSpace(binding.RegistrationID)
+	binding.SchemaVersion = strings.TrimSpace(binding.SchemaVersion)
+	if binding.CatalogID == "" {
+		binding.CatalogID = binding.RegistrationID
+	}
+	if binding.CatalogID == "" || binding.RegistrationID == "" || binding.SchemaVersion == "" {
+		return CatalogBinding{}, fmt.Errorf("go-command adapter: catalog id, registration id, and schema version are required")
+	}
+	if binding.Kind != command.HandlerKindCommand && binding.Kind != command.HandlerKindQuery {
+		return CatalogBinding{}, fmt.Errorf("go-command adapter: invalid catalog handler kind %q", binding.Kind)
+	}
+	if binding.AllowEventToCommand && binding.Kind != command.HandlerKindCommand {
+		return CatalogBinding{}, fmt.Errorf("go-command adapter: event reinterpretation requires a command binding")
+	}
+	registration, ok := provider.RegistrationByID(binding.Kind, binding.RegistrationID)
+	if !ok {
+		return CatalogBinding{}, command.NewRegistrationNotFoundError(binding.Kind, binding.RegistrationID)
+	}
+	if err := validateRegistration(registration); err != nil {
+		return CatalogBinding{}, err
+	}
+	return binding, nil
+}
+
+func (c *JSONCatalogCodec) addBinding(binding CatalogBinding) error {
+	catalogKey := catalogBindingKey{kind: binding.Kind, id: binding.CatalogID}
+	registrationKey := catalogBindingKey{kind: binding.Kind, id: binding.RegistrationID}
+	if _, exists := c.byCatalogID[catalogKey]; exists {
+		return fmt.Errorf("go-command adapter: ambiguous catalog id %q for %s", binding.CatalogID, binding.Kind)
+	}
+	if _, exists := c.byRegistration[registrationKey]; exists {
+		return fmt.Errorf("go-command adapter: ambiguous registration mapping %q for %s", binding.RegistrationID, binding.Kind)
+	}
+	c.byCatalogID[catalogKey] = binding
+	c.byRegistration[registrationKey] = binding
+	return nil
 }
 
 func (c *JSONCatalogCodec) EncodeCatalog(ctx context.Context, registration command.MessageRegistration, message any, options command.DispatchOptions) (CatalogDispatchDTO, error) {
@@ -222,7 +237,7 @@ func encodeCatalogOptions(options command.DispatchOptions) (CatalogOptionsDTO, e
 	dto := CatalogOptionsDTO{
 		Mode: string(mode), IdempotencyKey: strings.TrimSpace(options.IdempotencyKey),
 		DedupPolicy: string(command.NormalizeDedupPolicy(options.DedupPolicy)),
-		DelayNanos: options.Delay.Nanoseconds(), CorrelationID: strings.TrimSpace(options.CorrelationID),
+		DelayNanos:  options.Delay.Nanoseconds(), CorrelationID: strings.TrimSpace(options.CorrelationID),
 	}
 	if options.RunAt != nil {
 		dto.RunAt = options.RunAt.UTC().Format(time.RFC3339Nano)
@@ -247,7 +262,7 @@ func decodeCatalogOptions(dto CatalogOptionsDTO) (command.DispatchOptions, error
 	}
 	options := command.DispatchOptions{
 		Mode: mode, IdempotencyKey: strings.TrimSpace(dto.IdempotencyKey), DedupPolicy: policy,
-		Delay: time.Duration(dto.DelayNanos),
+		Delay:         time.Duration(dto.DelayNanos),
 		CorrelationID: strings.TrimSpace(dto.CorrelationID),
 	}
 	if strings.TrimSpace(dto.RunAt) != "" {
