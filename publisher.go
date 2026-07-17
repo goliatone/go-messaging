@@ -1,6 +1,9 @@
 package messaging
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 type Destination struct {
 	Name string
@@ -31,6 +34,26 @@ func (r PublishResult) Clone() PublishResult {
 		r.RecipientCount = &value
 	}
 	return r
+}
+
+// OutcomeError converts a non-accepted publish outcome into its stable error
+// classification. Drivers may return both provider-specific errors and an
+// outcome; routers use this method when a driver omits the corresponding error.
+func (r PublishResult) OutcomeError() error {
+	switch r.Outcome {
+	case PublishAccepted:
+		return nil
+	case PublishRejected:
+		return ErrPublishRejected
+	case PublishDefinitelyNotPublished:
+		return ErrNotPublished
+	case PublishAmbiguous:
+		return ErrPublishAmbiguous
+	case "":
+		return fmt.Errorf("%w: driver returned no publish outcome", ErrNotPublished)
+	default:
+		return fmt.Errorf("%w: driver returned invalid publish outcome %q", ErrNotPublished, r.Outcome)
+	}
 }
 
 type Publisher interface {
