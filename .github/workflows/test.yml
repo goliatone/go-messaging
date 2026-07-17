@@ -1,0 +1,31 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  modules:
+    runs-on: ubuntu-latest
+    services:
+      valkey:
+        image: valkey/valkey:8-alpine
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Test every present module
+        env:
+          VALKEY_ADDRESS: 127.0.0.1:6379
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r module_file; do
+            module_dir="${module_file%/go.mod}"
+            if [[ "$module_file" == "go.mod" ]]; then module_dir="."; fi
+            echo "Testing ${module_dir}"
+            (cd "$module_dir" && GOWORK=off go test -race ./... && GOWORK=off go vet ./...)
+          done < <(find . -name go.mod -not -path '*/vendor/*' -print | sed 's#^./##' | sort)

@@ -1,0 +1,108 @@
+name: Go Quality
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "**/*.go"
+      - "**/go.mod"
+      - "**/go.sum"
+      - "go.work"
+      - "go.work.sum"
+      - ".golangci.yml"
+      - ".golangci-lint-version"
+      - "taskfile"
+      - ".github/workflows/go-quality.yml"
+  push:
+    branches: [main]
+    paths:
+      - "**/*.go"
+      - "**/go.mod"
+      - "**/go.sum"
+      - "go.work"
+      - "go.work.sum"
+      - ".golangci.yml"
+      - ".golangci-lint-version"
+      - "taskfile"
+      - ".github/workflows/go-quality.yml"
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  lint-pr:
+    name: Lint New Issues
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Check formatting
+        run: ./taskfile go:fmt:check
+
+      - name: Run golangci-lint on new issues in every module
+        env:
+          GO_LINT_NEW_FROM_REV: origin/main
+        run: ./taskfile go:lint:new
+
+  lint-advisory:
+    name: Lint Full Repository (Advisory)
+    if: github.event_name == 'pull_request'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run full golangci-lint report for every module
+        run: ./taskfile go:lint:report
+
+  lint-main:
+    name: Lint Full Repository
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Check formatting
+        run: ./taskfile go:fmt:check
+
+      - name: Run strict golangci-lint for every module
+        run: ./taskfile go:lint
+
+  security:
+    name: Go Security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run govulncheck and gosec for every module
+        run: ./taskfile go:security:all
