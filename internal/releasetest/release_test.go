@@ -136,6 +136,27 @@ replace github.com/goliatone/go-messaging => ../..
 	}
 }
 
+func TestChatDemoUsesPublishedRootVersionWithLocalReplacement(t *testing.T) {
+	repository := repositoryRoot(t)
+	contents, err := os.ReadFile(filepath.Join(repository, "examples/chat-demo/go.mod"))
+	if err != nil {
+		t.Fatalf("read chat demo module: %v", err)
+	}
+	text := string(contents)
+	if strings.Contains(text, "\tgithub.com/goliatone/go-messaging v0.0.0\n") {
+		t.Fatal("chat demo uses the unresolvable root placeholder version")
+	}
+	if !strings.Contains(text, "github.com/goliatone/go-messaging v0.0.0-") {
+		t.Fatal("chat demo does not pin a published root pseudo-version")
+	}
+	if !strings.Contains(text, "exclude github.com/goliatone/go-messaging v0.0.0") {
+		t.Fatal("chat demo does not exclude the transport module's unresolved root placeholder")
+	}
+	if !strings.Contains(text, "replace github.com/goliatone/go-messaging => ../..") {
+		t.Fatal("chat demo lost its repository-development root replacement")
+	}
+}
+
 func TestReleasePreflightRejectsUntrackedManagedOutputs(t *testing.T) {
 	for _, name := range []string{".version", "CHANGELOG.md"} {
 		t.Run(name, func(t *testing.T) {
