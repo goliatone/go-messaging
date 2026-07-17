@@ -68,6 +68,13 @@ func (r Route) validateShape() error {
 	if r.Strategy == StrategyPrimary && len(r.Bindings) != 1 {
 		return fmt.Errorf("%w: primary route %q requires exactly one binding", ErrUnknownRoute, r.Name)
 	}
+	owner := fmt.Sprintf("route %q", r.Name)
+	if err := validateKindFilter(owner, r.Kinds); err != nil {
+		return err
+	}
+	if err := validateStringFilter(owner, "type", r.Types); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -112,4 +119,38 @@ func (r Route) matches(envelope Envelope) bool {
 
 func containsKind(kinds []Kind, want Kind) bool {
 	return slices.Contains(kinds, want)
+}
+
+func validateKindFilter(owner string, kinds []Kind) error {
+	seen := make(map[Kind]struct{}, len(kinds))
+	for _, kind := range kinds {
+		switch kind {
+		case KindCommand, KindQuery, KindEvent, KindReply:
+		default:
+			return fmt.Errorf("%w: %s has invalid kind %q", ErrInvalidEnvelope, owner, kind)
+		}
+		if _, duplicate := seen[kind]; duplicate {
+			return fmt.Errorf("%w: %s has duplicate kind %q", ErrInvalidEnvelope, owner, kind)
+		}
+		seen[kind] = struct{}{}
+	}
+	return nil
+}
+
+func validateStringFilter(owner, label string, values []string) error {
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		normalized := strings.TrimSpace(value)
+		if normalized == "" {
+			return fmt.Errorf("%w: %s has an empty accepted %s", ErrInvalidEnvelope, owner, label)
+		}
+		if normalized != value {
+			return fmt.Errorf("%w: %s has a non-canonical accepted %s %q", ErrInvalidEnvelope, owner, label, value)
+		}
+		if _, duplicate := seen[normalized]; duplicate {
+			return fmt.Errorf("%w: %s has duplicate accepted %s %q", ErrInvalidEnvelope, owner, label, normalized)
+		}
+		seen[normalized] = struct{}{}
+	}
+	return nil
 }
