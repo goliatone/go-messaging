@@ -841,6 +841,7 @@ function release:changelog:generate {
 function _modules:sync_go_messaging {
     local dir=${1}
     local tag=${2}
+    local root_module
     shift 2
 
     local run_tidy=0
@@ -861,7 +862,20 @@ function _modules:sync_go_messaging {
         return 0
     fi
 
-    (cd "${dir}" && go mod edit -require=github.com/goliatone/go-messaging@v${tag}) || return 1
+    root_module=$(_module:path "${SCRIPT_DIR}/go.mod") || return 1
+    if [ -z "${root_module}" ]; then
+        echo "root module path is required" >&2
+        return 1
+    fi
+
+    (
+        cd "${dir}" &&
+        go mod edit \
+            -droprequire=github.com/goliatone/go-messaging \
+            -require="${root_module}@v${tag}" \
+            -dropreplace=github.com/goliatone/go-messaging \
+            -dropreplace="${root_module}"
+    ) || return 1
 
     if [ "${run_tidy}" -eq 1 ]; then
         (cd "${dir}" && go mod tidy) || return 1
@@ -1011,6 +1025,7 @@ function release:dry-run {
     local release_tag
     local module_dir
     local command_version
+    local root_module
     local main_branch="${GIT_MAIN:-main}"
 
     if [ "$#" -gt 1 ]; then
@@ -1025,12 +1040,14 @@ function release:dry-run {
     release_tag="v${version}"
 
     _release:assert_module_versions "${version}" || return 1
+    root_module=$(_module:path go.mod) || return 1
 
     echo "release-tag: ${release_tag}"
-    echo "root-module: $(_module:path go.mod)"
+    echo "root-module: ${root_module}"
 
     while IFS= read -r module_dir; do
-        echo "root-requirement: ${module_dir} github.com/goliatone/go-messaging@${release_tag}"
+        echo "root-requirement: ${module_dir} ${root_module}@${release_tag}"
+        echo "removed-replacement: ${module_dir} ${root_module}"
         if [ "${module_dir}" = "adapters/go-command" ]; then
             command_version=$(_module:required_version "${module_dir}/go.mod" "github.com/goliatone/go-command")
             if [ -z "${command_version}" ]; then
