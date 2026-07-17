@@ -50,9 +50,6 @@ Temporary Items
 # Dependency directories (remove the comment below to include it)
 # vendor/
 
-# Go workspace file
-go.work
-go.work.sum
 .tmp
 node_modules
 .build_hash
@@ -80,3 +77,4 @@ pkg/client/assets/.dist-staging/
 pkg/client/assets/.dist-prev/
 pkg/client/assets/test-results/.playwright-artifacts-1
 pkg/client/assets/test-results/.last-run.json
+go.work*

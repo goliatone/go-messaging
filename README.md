@@ -58,6 +58,12 @@ _, err = router.Publish(ctx, "domain-events", event)
 
 Use Valkey Streams when durable delivery, acknowledgement, competing consumers, replay, or dead-lettering is required. Use Pub/Sub for ephemeral fanout. Routes are logical application names; provider destinations remain inside route bindings.
 
+## Runnable chat example
+
+[`examples/chat-demo`](examples/chat-demo/README.md) provides a complete browser
+and terminal chat over a go-router WebSocket gateway and Valkey Pub/Sub. It is a
+nested module, so its UI and transport dependencies do not enter the root module.
+
 ## go-command integration
 
 The optional adapter supports local-only, publisher, worker, hybrid placement, explicitly authorized event-to-command triggers, and correlated command/query replies. See [the go-command adapter guide](docs/GUIDE_GO_COMMAND_ADAPTER.md) for assembly examples and safety rules.
