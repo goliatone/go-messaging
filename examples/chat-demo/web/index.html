@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>go-messaging live chat</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="masthead">
+      <div>
+        <p class="eyebrow">go-messaging example</p>
+        <h1>Live chat, through the broker.</h1>
+        <p class="intro">Browser and terminal clients share one logical route over Valkey Pub/Sub.</p>
+      </div>
+      <div class="status-panel" aria-live="polite">
+        <span id="connection-dot" class="status-dot" aria-hidden="true"></span>
+        <div>
+          <strong id="connection-state">Connecting</strong>
+          <span id="connection-detail">Waiting for server readiness</span>
+        </div>
+      </div>
+    </header>
+
+    <section class="transport-card" aria-label="Delivery information">
+      <span class="transport-mark">V</span>
+      <div>
+        <strong>Valkey Pub/Sub</strong>
+        <span>Live and ephemeral</span>
+      </div>
+      <p>No history or replay. Messages sent while you are offline will not appear later.</p>
+    </section>
+
+    <section class="chat-card">
+      <div class="feed-heading">
+        <div>
+          <p class="eyebrow">Delivered messages</p>
+          <h2>Room feed</h2>
+        </div>
+        <span id="message-count" class="count">0 messages</span>
+      </div>
+
+      <ol id="message-feed" class="message-feed" aria-live="polite" aria-relevant="additions">
+        <li id="empty-feed" class="empty-feed">
+          <strong>The room is quiet.</strong>
+          <span>Only messages delivered back through Valkey appear here.</span>
+        </li>
+      </ol>
+
+      <form id="composer" class="composer" autocomplete="off">
+        <label>
+          <span>Your name</span>
+          <input id="sender" name="sender" maxlength="40" placeholder="Ada" required>
+        </label>
+        <label class="message-field">
+          <span>Message</span>
+          <textarea id="message" name="message" maxlength="1000" rows="3" placeholder="Write a message…" required></textarea>
+        </label>
+        <div class="composer-footer">
+          <p id="feedback" class="feedback" aria-live="polite">Sending unlocks when the server is ready.</p>
+          <button id="send-button" type="submit" disabled>Send message</button>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <script src="/assets/app.js" defer></script>
+</body>
+</html>
