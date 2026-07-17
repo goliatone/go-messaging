@@ -87,15 +87,15 @@ func TestRealValkeyBrowserCLIAndDirectReaderFlows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := waitForSubscriptions(ctx, subscriptions); err != nil {
-		t.Fatal(err)
+	if waitErr := waitForSubscriptions(ctx, subscriptions); waitErr != nil {
+		t.Fatal(waitErr)
 	}
 	t.Cleanup(func() {
-		if err := closeSubscriptions(subscriptions); err != nil {
-			t.Errorf("close reader subscriptions: %v", err)
+		if closeErr := closeSubscriptions(subscriptions); closeErr != nil {
+			t.Errorf("close reader subscriptions: %v", closeErr)
 		}
-		if err := closeBroker(readerBroker); err != nil {
-			t.Errorf("close reader broker: %v", err)
+		if closeErr := closeBroker(readerBroker); closeErr != nil {
+			t.Errorf("close reader broker: %v", closeErr)
 		}
 	})
 	client := newIntegrationValkeyClient(t, address)

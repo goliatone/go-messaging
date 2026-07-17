@@ -21,8 +21,43 @@ var (
 	ErrUnsupportedDisposition = errors.New("messaging: unsupported disposition")
 	ErrDeadLetter             = errors.New("messaging: dead-letter failure")
 	ErrHandlerPanic           = errors.New("messaging: handler panic")
+	ErrMessageHandling        = errors.New("messaging: message handling failed")
 	ErrObservedOperation      = errors.New("messaging: observed operation failed")
 )
+
+// MessageError marks a per-message decode, policy, or handler failure. The
+// subscription remains usable; lifecycle and provider errors are deliberately
+// left unwrapped so callers can treat them as terminal.
+type MessageError struct {
+	Cause error
+}
+
+func (e *MessageError) Error() string { return ErrMessageHandling.Error() }
+
+func (e *MessageError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
+func (e *MessageError) Is(target error) bool {
+	return e != nil && (target == ErrMessageHandling || errors.Is(e.Cause, target))
+}
+
+// NewMessageError classifies a recoverable error associated with one consumed
+// message without exposing its potentially sensitive cause in Error().
+func NewMessageError(cause error) error {
+	if cause == nil {
+		return nil
+	}
+	return &MessageError{Cause: cause}
+}
+
+// IsMessageError reports whether consumption can continue after err.
+func IsMessageError(err error) bool {
+	return errors.Is(err, ErrMessageHandling)
+}
 
 func safeObservationError(err error) error {
 	if err == nil {
@@ -52,7 +87,7 @@ func safeObservationClass(err error) error {
 		ErrPublishRejected, ErrPublishAmbiguous, ErrNotPublished,
 		ErrSubscriptionNotReady, ErrSubscriptionClosed, ErrReplyTimeout,
 		ErrCorrelation, ErrAcknowledgement, ErrUnsupportedDisposition, ErrDeadLetter,
-		ErrHandlerPanic, context.Canceled, context.DeadlineExceeded,
+		ErrHandlerPanic, ErrMessageHandling, context.Canceled, context.DeadlineExceeded,
 	} {
 		if errors.Is(err, candidate) {
 			return candidate

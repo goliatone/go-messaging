@@ -179,8 +179,14 @@ func diagnosticWriter(output io.Writer) func(error) {
 		output = io.Discard
 	}
 	return func(error) {
-		defer func() { _ = recover() }()
-		_, _ = fmt.Fprintln(output, messageRejectedMessage)
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				return
+			}
+		}()
+		if _, err := fmt.Fprintln(output, messageRejectedMessage); err != nil {
+			return
+		}
 	}
 }
 
