@@ -29,6 +29,7 @@ type ServerConfig struct {
 	MaxMessageSize   int64
 	BroadcastTimeout time.Duration
 	ShutdownTimeout  time.Duration
+	DiagnosticWriter io.Writer
 }
 
 func DefaultServerConfig() ServerConfig {
@@ -41,6 +42,7 @@ func DefaultServerConfig() ServerConfig {
 		MaxMessageSize:   MaxPayloadSize,
 		BroadcastTimeout: 3 * time.Second,
 		ShutdownTimeout:  5 * time.Second,
+		DiagnosticWriter: io.Discard,
 	}
 }
 
@@ -60,6 +62,9 @@ func (c ServerConfig) withDefaults() ServerConfig {
 	}
 	if c.ShutdownTimeout == 0 {
 		c.ShutdownTimeout = defaults.ShutdownTimeout
+	}
+	if c.DiagnosticWriter == nil {
+		c.DiagnosticWriter = defaults.DiagnosticWriter
 	}
 	return c
 }
@@ -212,7 +217,7 @@ func (s *ChatServer) Serve(ctx context.Context) (runErr error) {
 	monitorDone = done
 	go func() {
 		defer close(done)
-		messagingErrors <- monitorMessaging(runCtx, s.broker.Errors(), s.subscriptions)
+		messagingErrors <- monitorMessaging(runCtx, s.broker.Errors(), s.subscriptions, diagnosticWriter(s.config.DiagnosticWriter))
 	}()
 	select {
 	case <-runCtx.Done():
@@ -282,7 +287,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 	server, err := NewChatServer(ServerConfig{
 		ListenAddress: *listen, AllowedOrigins: allowedOrigins,
-		MaxMessageSize: *maxMessageSize, ShutdownTimeout: *shutdownTimeout,
+		MaxMessageSize: *maxMessageSize, ShutdownTimeout: *shutdownTimeout, DiagnosticWriter: stderr,
 	}, broker)
 	if err != nil {
 		return err

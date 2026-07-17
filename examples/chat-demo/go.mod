@@ -7,6 +7,7 @@ require (
 	github.com/goliatone/go-messaging/transport/valkey v0.0.0-20260717054047-0bb0a9faa369
 	github.com/goliatone/go-router v0.59.0
 	github.com/gorilla/websocket v1.5.1
+	github.com/valkey-io/valkey-go v1.0.65
 )
 
 require (
@@ -38,7 +39,6 @@ require (
 	github.com/savsgio/gotils v0.0.0-20240303185622-093b76447511 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
-	github.com/valkey-io/valkey-go v1.0.65 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.52.0 // indirect
 	github.com/valyala/tcplisten v1.0.0 // indirect

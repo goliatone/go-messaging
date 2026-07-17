@@ -23,6 +23,7 @@ const (
 	publishFailedMessage        = "message could not be published"
 	subscriptionFailedMessage   = "chat subscription was interrupted"
 	shutdownFailedMessage       = "messaging shutdown did not complete cleanly"
+	messageRejectedMessage      = "ignored malformed or rejected broker message"
 )
 
 // publicError keeps the original cause available to errors.Is/errors.As while
