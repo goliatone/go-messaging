@@ -17,8 +17,8 @@ func TestJSONCodecRoundTripUsesExplicitBase64(t *testing.T) {
 		t.Fatal(err)
 	}
 	var wire map[string]any
-	if err := json.Unmarshal(data, &wire); err != nil {
-		t.Fatal(err)
+	if decodeErr := json.Unmarshal(data, &wire); decodeErr != nil {
+		t.Fatal(decodeErr)
 	}
 	if wire["payload_base64"] != "AAEC/v8=" {
 		t.Fatalf("unexpected wire payload %v", wire["payload_base64"])

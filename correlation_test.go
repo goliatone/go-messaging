@@ -8,7 +8,10 @@ import (
 )
 
 func TestCorrelationRegisterBeforeDeliverAndCleanup(t *testing.T) {
-	r, _ := NewCorrelationRegistry(1, time.Second)
+	r, err := NewCorrelationRegistry(1, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
 	w, err := r.Register("corr-1", "orders.reply", time.Time{})
 	if err != nil {
 		t.Fatal(err)
@@ -27,8 +30,14 @@ func TestCorrelationRegisterBeforeDeliverAndCleanup(t *testing.T) {
 }
 
 func TestCorrelationMismatchAndCancellation(t *testing.T) {
-	r, _ := NewCorrelationRegistry(1, time.Second)
-	w, _ := r.Register("corr-1", "right", time.Time{})
+	r, err := NewCorrelationRegistry(1, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := r.Register("corr-1", "right", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	reply := validEnvelope()
 	reply.Kind = KindReply
 	reply.Type = "wrong"
@@ -47,8 +56,14 @@ func TestCorrelationMismatchAndCancellation(t *testing.T) {
 }
 
 func TestCorrelationCapacityAndTimeout(t *testing.T) {
-	r, _ := NewCorrelationRegistry(1, 10*time.Millisecond)
-	w, _ := r.Register("one", "reply", time.Time{})
+	r, err := NewCorrelationRegistry(1, 10*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := r.Register("one", "reply", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := r.Register("two", "reply", time.Time{}); !errors.Is(err, ErrCorrelation) {
 		t.Fatalf("got %v", err)
 	}
@@ -58,8 +73,14 @@ func TestCorrelationCapacityAndTimeout(t *testing.T) {
 }
 
 func TestCorrelationExplicitCancelAndSingleAwait(t *testing.T) {
-	r, _ := NewCorrelationRegistry(1, time.Second)
-	w, _ := r.Register("one", "reply", time.Time{})
+	r, err := NewCorrelationRegistry(1, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := r.Register("one", "reply", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	w.Cancel()
 	if _, err := w.Await(context.Background()); !errors.Is(err, ErrCorrelation) {
 		t.Fatalf("got %v", err)

@@ -26,7 +26,10 @@ func (d *consumeStub) Subscribe(_ context.Context, _ Source, handler Handler) (S
 
 func TestIngressAllowsSameLogicalMessageAcrossDrivers(t *testing.T) {
 	one, two := &consumeStub{}, &consumeStub{}
-	registry, _ := NewDriverRegistry(map[string]Driver{"one": one, "two": two})
+	registry, err := NewDriverRegistry(map[string]Driver{"one": one, "two": two})
+	if err != nil {
+		t.Fatal(err)
+	}
 	calls := 0
 	handler := func(context.Context, Delivery) HandleResult { calls++; return Complete() }
 	ingress, err := NewIngress(registry, []IngressBinding{
@@ -49,7 +52,10 @@ func TestIngressAllowsSameLogicalMessageAcrossDrivers(t *testing.T) {
 
 func TestIngressRejectsUnsupportedDisposition(t *testing.T) {
 	driver := &consumeStub{}
-	registry, _ := NewDriverRegistry(map[string]Driver{"ephemeral": driver})
+	registry, registryErr := NewDriverRegistry(map[string]Driver{"ephemeral": driver})
+	if registryErr != nil {
+		t.Fatal(registryErr)
+	}
 	_, err := NewIngress(registry, []IngressBinding{{Name: "a", LogicalRoute: "a", Driver: "ephemeral", Source: Source{Name: "a"}, Handlers: []Handler{func(context.Context, Delivery) HandleResult { return Complete() }}, RequiredDispositions: []Disposition{DispositionRetry}}})
 	if !errors.Is(err, ErrUnsupportedCapability) {
 		t.Fatalf("got %v", err)

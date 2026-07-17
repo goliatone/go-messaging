@@ -69,7 +69,10 @@ func TestRouterFailoverStopsOnAmbiguous(t *testing.T) {
 
 func TestRouterRejectsUnsafeCommandFanout(t *testing.T) {
 	driver := &publishStub{}
-	registry, _ := NewDriverRegistry(map[string]Driver{"one": driver})
+	registry, registryErr := NewDriverRegistry(map[string]Driver{"one": driver})
+	if registryErr != nil {
+		t.Fatal(registryErr)
+	}
 	_, err := NewRouter(registry, []Route{{Name: "commands", Strategy: StrategyFanout, Kinds: []Kind{KindCommand}, Bindings: []RouteBinding{{Driver: "one", Destination: Destination{Name: "a"}}}}}, nil)
 	if !errors.Is(err, ErrUnsupportedCapability) {
 		t.Fatalf("got %v", err)
@@ -89,8 +92,14 @@ func TestFailedRouteReplacementPreservesGeneration(t *testing.T) {
 
 func TestDriverReplacementCannotPanicRouter(t *testing.T) {
 	driver := &publishStub{}
-	registry, _ := NewDriverRegistry(map[string]Driver{"one": driver})
-	r, _ := NewRouter(registry, []Route{{Name: "events", Strategy: StrategyPrimary, Bindings: []RouteBinding{{Driver: "one", Destination: Destination{Name: "a"}}}}}, nil)
+	registry, err := NewDriverRegistry(map[string]Driver{"one": driver})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := NewRouter(registry, []Route{{Name: "events", Strategy: StrategyPrimary, Bindings: []RouteBinding{{Driver: "one", Destination: Destination{Name: "a"}}}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := registry.Replace(map[string]Driver{"one": &stubDriver{}}); err != nil {
 		t.Fatal(err)
 	}
