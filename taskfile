@@ -20,6 +20,7 @@ GO_GOSEC_VERSION="${GO_GOSEC_VERSION:-v2.25.0}"
 GO_QUALITY_GOCACHE="${GO_QUALITY_GOCACHE:-$(pwd)/.tmp/go-cache}"
 GO_QUALITY_GOTMPDIR="${GO_QUALITY_GOTMPDIR:-$(pwd)/.tmp/go-tmp}"
 GO_LINT_NEW_FROM_REV="${GO_LINT_NEW_FROM_REV:-origin/main}"
+GIT_CLIFF_BIN="${GIT_CLIFF_BIN:-git-cliff}"
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -66,13 +67,22 @@ function _install:lgr {
 }
 
 function _install:changelog {
-    if git-cliff lgr 2>/dev/null; then
+    if command -v "${GIT_CLIFF_BIN}" >/dev/null 2>&1; then
         lgr OK "git-cliff already installed..."
-    else
-        echo "Installing lgr"
-        brew install brew install orhun/git-cliff/git-cliff
-        lgr OK "git-cliff installed..."
+        return 0
     fi
+
+    echo "Installing git-cliff"
+    if command -v brew >/dev/null 2>&1; then
+        brew install orhun/git-cliff/git-cliff || return 1
+    elif command -v cargo >/dev/null 2>&1; then
+        cargo install git-cliff --locked || return 1
+    else
+        echo "git-cliff is required; install it with Homebrew or Cargo" >&2
+        return 1
+    fi
+    command -v "${GIT_CLIFF_BIN}" >/dev/null 2>&1 || return 1
+    lgr OK "git-cliff installed..."
 }
 
 function _install:brew {
@@ -817,13 +827,13 @@ function release:changelog:generate {
     if release:notes:has_content "${release_notes_file}"; then
         release:notes:assert_temporary "${release_notes_file}" || return 1
         release_notes=$(cat "${release_notes_file}") || return 1
-        git cliff --tag "${release_tag}" --with-tag-message "${release_notes}" --output CHANGELOG.md || return 1
+        "${GIT_CLIFF_BIN}" --tag "${release_tag}" --with-tag-message "${release_notes}" --output CHANGELOG.md || return 1
         rm -f "${release_notes_file}" || return 1
         echo "Included and removed temporary release notes: ${release_notes_file}" >&2
         return 0
     fi
 
-    git cliff --tag "${release_tag}" --output CHANGELOG.md
+    "${GIT_CLIFF_BIN}" --tag "${release_tag}" --output CHANGELOG.md
 }
 
 ##
@@ -1011,6 +1021,42 @@ function _release:assert_module_versions {
     done < <(_modules:list)
 }
 
+function _release:assert_managed_output {
+    local path=${1}
+
+    if [ -e "${path}" ] && ! git ls-files --error-unmatch -- "${path}" >/dev/null 2>&1; then
+        echo "Untracked release-managed output exists: ${path}" >&2
+        echo "Remove it or add a reviewed initial version before releasing." >&2
+        return 1
+    fi
+}
+
+function release:preflight {
+    local main_branch="${GIT_MAIN:-main}"
+    local current_branch
+
+    current_branch=$(git symbolic-ref --short HEAD) || return 1
+    if [[ "${current_branch}" != "${main_branch}" ]]; then
+        lgr E "Release must run on ${main_branch}; current branch is ${current_branch}"
+        return 1
+    fi
+    if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+        echo "Tracked working tree changes are present; commit or stash them before release." >&2
+        git status --short --untracked-files=no >&2
+        return 1
+    fi
+    _release:assert_managed_output "${VERSION_FILE}" || return 1
+    _release:assert_managed_output "CHANGELOG.md" || return 1
+    if ! command -v "${GIT_CLIFF_BIN}" >/dev/null 2>&1; then
+        echo "git-cliff is required before release: ${GIT_CLIFF_BIN}" >&2
+        return 1
+    fi
+    if ! git remote get-url origin >/dev/null 2>&1; then
+        echo "Release remote 'origin' is not configured" >&2
+        return 1
+    fi
+}
+
 ##
 ## -----
 ##
@@ -1082,7 +1128,6 @@ function release {
     local tag
     local level
     local message
-    local current_branch
     local release_tag
     local main_branch="${GIT_MAIN:-main}"
     local release_notes_file
@@ -1150,17 +1195,7 @@ function release {
 
     level=${level:-"patch"}
 
-    current_branch=$(git symbolic-ref --short HEAD) || return 1
-    if [[ "${current_branch}" != "${main_branch}" ]]; then
-        lgr E "Release must run on ${main_branch}; current branch is ${current_branch}"
-        return 1
-    fi
-
-    if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
-        echo "Tracked working tree changes are present; commit or stash them before release." >&2
-        git status --short --untracked-files=no >&2
-        return 1
-    fi
+    release:preflight || return 1
 
     git fetch origin "${main_branch}" --tags || return 1
     git merge --ff-only "origin/${main_branch}" || return 1
@@ -1208,7 +1243,7 @@ function release {
     if [ "${release_notes_enabled}" -eq 1 ]; then
         release:changelog:generate "${release_tag}" "${release_notes_file}" || return 1
     else
-        git cliff --tag "${release_tag}" --output CHANGELOG.md || return 1
+        "${GIT_CLIFF_BIN}" --tag "${release_tag}" --output CHANGELOG.md || return 1
     fi
 
     git add "${VERSION_FILE}" CHANGELOG.md || return 1
