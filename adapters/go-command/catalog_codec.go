@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -24,7 +23,7 @@ type CatalogOptionsDTO struct {
 	Mode           string `json:"mode,omitempty"`
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 	DedupPolicy    string `json:"dedup_policy,omitempty"`
-	DelayMillis    int64  `json:"delay_millis,omitempty"`
+	DelayNanos     int64  `json:"delay_nanos,omitempty"`
 	RunAt          string `json:"run_at,omitempty"`
 	CorrelationID  string `json:"correlation_id,omitempty"`
 }
@@ -223,7 +222,7 @@ func encodeCatalogOptions(options command.DispatchOptions) (CatalogOptionsDTO, e
 	dto := CatalogOptionsDTO{
 		Mode: string(mode), IdempotencyKey: strings.TrimSpace(options.IdempotencyKey),
 		DedupPolicy: string(command.NormalizeDedupPolicy(options.DedupPolicy)),
-		DelayMillis: options.Delay.Milliseconds(), CorrelationID: strings.TrimSpace(options.CorrelationID),
+		DelayNanos: options.Delay.Nanoseconds(), CorrelationID: strings.TrimSpace(options.CorrelationID),
 	}
 	if options.RunAt != nil {
 		dto.RunAt = options.RunAt.UTC().Format(time.RFC3339Nano)
@@ -243,12 +242,12 @@ func decodeCatalogOptions(dto CatalogOptionsDTO) (command.DispatchOptions, error
 	if err != nil {
 		return command.DispatchOptions{}, err
 	}
-	if dto.DelayMillis < 0 {
-		return command.DispatchOptions{}, fmt.Errorf("go-command adapter: delay_millis must be non-negative")
+	if dto.DelayNanos < 0 {
+		return command.DispatchOptions{}, fmt.Errorf("go-command adapter: delay_nanos must be non-negative")
 	}
 	options := command.DispatchOptions{
 		Mode: mode, IdempotencyKey: strings.TrimSpace(dto.IdempotencyKey), DedupPolicy: policy,
-		Delay: time.Duration(dto.DelayMillis) * time.Millisecond,
+		Delay: time.Duration(dto.DelayNanos),
 		CorrelationID: strings.TrimSpace(dto.CorrelationID),
 	}
 	if strings.TrimSpace(dto.RunAt) != "" {
@@ -277,13 +276,6 @@ func cloneAnyMap(source map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	return cloned
-}
-
-func registrationResultName(registration command.MessageRegistration) string {
-	if registration == nil || registration.ResultType() == nil {
-		return ""
-	}
-	return reflect.TypeOf(reflect.New(registration.ResultType()).Elem().Interface()).String()
 }
 
 type CatalogIngressExecutor interface {
