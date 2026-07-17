@@ -2,6 +2,7 @@ package streams
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -36,6 +37,57 @@ func TestCapabilitiesAreDurable(t *testing.T) {
 	caps := driver.Capabilities()
 	if !caps.Durability || !caps.Acknowledgement || !caps.CompetingConsumers || !caps.Replay {
 		t.Fatalf("unexpected capabilities %#v", caps)
+	}
+}
+
+func TestManualRetryNackSettlesCurrentInvocation(t *testing.T) {
+	driver, err := New(DefaultConfig("127.0.0.1:6379"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub := &subscription{driver: driver, errors: make(chan error, 1)}
+	delivery := &streamDelivery{
+		BasicDelivery: messaging.NewDelivery(messaging.Envelope{}, messaging.DeliveryInfo{Attempt: 1}),
+		subscription:  sub,
+	}
+	if err := delivery.Nack(context.Background(), messaging.NackOptions{Disposition: messaging.DispositionRetry}); err != nil {
+		t.Fatal(err)
+	}
+	if !delivery.settled.Load() {
+		t.Fatal("retry nack must settle the current handler invocation")
+	}
+}
+
+func TestManualRetryNackReportsUnsupportedExactDelay(t *testing.T) {
+	driver, err := New(DefaultConfig("127.0.0.1:6379"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub := &subscription{driver: driver, errors: make(chan error, 1)}
+	delivery := &streamDelivery{
+		BasicDelivery: messaging.NewDelivery(messaging.Envelope{}, messaging.DeliveryInfo{Attempt: 1}),
+		subscription:  sub,
+	}
+	err = delivery.Nack(context.Background(), messaging.NackOptions{Disposition: messaging.DispositionRetry, RetryAfter: time.Second})
+	if !errors.Is(err, messaging.ErrUnsupportedCapability) {
+		t.Fatalf("expected unsupported delay error, got %v", err)
+	}
+	select {
+	case reported := <-sub.errors:
+		if !errors.Is(reported, messaging.ErrUnsupportedCapability) {
+			t.Fatalf("unexpected report: %v", reported)
+		}
+	default:
+		t.Fatal("unsupported delay was not reported")
+	}
+}
+
+func TestDeadLetterReasonDoesNotExposeArbitraryErrors(t *testing.T) {
+	if got := safeDeadLetterReason(errors.New("payload=secret")); got != "rejected" {
+		t.Fatalf("unsafe dead-letter reason %q", got)
+	}
+	if got := safeDeadLetterReason(context.DeadlineExceeded); got != context.DeadlineExceeded.Error() {
+		t.Fatalf("classified reason = %q", got)
 	}
 }
 
