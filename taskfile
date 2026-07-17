@@ -9,6 +9,17 @@ export LGR_NO_TIMESTAMP=true
 
 GIT_MAIN="main"
 VERSION_FILE="./.version"
+GO_NESTED_MODULES="${GO_NESTED_MODULES:-transport/valkey transport/ws adapters/go-command}"
+# Quality tools may require a newer compiler than the module's Go baseline.
+# Automatic selection applies only to the isolated `go install` invocations.
+GO_TOOLCHAIN="${GO_TOOLCHAIN:-auto}"
+GO_GOLANGCI_LINT_VERSION="${GO_GOLANGCI_LINT_VERSION:-v2.12.2}"
+GO_GOLANGCI_LINT_VERSION_FILE="${GO_GOLANGCI_LINT_VERSION_FILE:-.golangci-lint-version}"
+GO_GOVULNCHECK_VERSION="${GO_GOVULNCHECK_VERSION:-v1.1.4}"
+GO_GOSEC_VERSION="${GO_GOSEC_VERSION:-v2.25.0}"
+GO_QUALITY_GOCACHE="${GO_QUALITY_GOCACHE:-$(pwd)/.tmp/go-cache}"
+GO_QUALITY_GOTMPDIR="${GO_QUALITY_GOTMPDIR:-$(pwd)/.tmp/go-tmp}"
+GO_LINT_NEW_FROM_REV="${GO_LINT_NEW_FROM_REV:-origin/main}"
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -89,7 +100,458 @@ function lgr {
     command lgr "$@"
   else
     printf '%s\n' "$*"
-  fi
+    fi
+}
+
+function _go:bin {
+    if command -v go >/dev/null 2>&1; then
+        command -v go
+        return 0
+    fi
+
+    echo "go binary not found in PATH" >&2
+    return 1
+}
+
+function _go:quality:prepare_env {
+    export GOCACHE="${GOCACHE:-${GO_QUALITY_GOCACHE}}"
+    export GOTMPDIR="${GOTMPDIR:-${GO_QUALITY_GOTMPDIR}}"
+    mkdir -p "${GOCACHE}" "${GOTMPDIR}"
+}
+
+function _go:golangci_lint_version {
+    if [ -f "${GO_GOLANGCI_LINT_VERSION_FILE}" ]; then
+        awk 'NF { print $1; exit }' "${GO_GOLANGCI_LINT_VERSION_FILE}"
+        return 0
+    fi
+
+    printf '%s\n' "${GO_GOLANGCI_LINT_VERSION}"
+}
+
+function _go:tool_bin_dir {
+    local go_bin
+    local gobin
+    local gopath
+
+    go_bin=$(_go:bin) || return 1
+    gobin="$("${go_bin}" env GOBIN)"
+    if [ -n "${gobin}" ]; then
+        printf '%s\n' "${gobin}"
+        return 0
+    fi
+
+    gopath="$("${go_bin}" env GOPATH)"
+    if [ -n "${gopath}" ]; then
+        printf '%s\n' "${gopath%/}/bin"
+        return 0
+    fi
+
+    echo "unable to resolve Go tool bin directory" >&2
+    return 1
+}
+
+function _go:tool:path {
+    local name=$1
+    local bin_dir
+
+    if command -v "${name}" >/dev/null 2>&1; then
+        command -v "${name}"
+        return 0
+    fi
+
+    bin_dir=$(_go:tool_bin_dir) || return 1
+    if [ -x "${bin_dir}/${name}" ]; then
+        printf '%s\n' "${bin_dir}/${name}"
+        return 0
+    fi
+
+    return 1
+}
+
+function _go:tool:install {
+    local name=$1
+    local target=$2
+    local go_bin
+
+    go_bin=$(_go:bin) || return 1
+    _go:quality:prepare_env || return 1
+    echo "Installing ${name} (${target})" >&2
+    GOTOOLCHAIN="${GO_TOOLCHAIN}" "${go_bin}" install "${target}" || return 1
+    _go:tool:path "${name}" || return 1
+}
+
+function _go:tool:ensure {
+    local name=$1
+    local target=$2
+    local tool_path
+
+    if tool_path=$(_go:tool:path "${name}" 2>/dev/null); then
+        printf '%s\n' "${tool_path}"
+        return 0
+    fi
+
+    _go:tool:install "${name}" "${target}"
+}
+
+function _go:golangci_lint:ensure {
+    local version=$1
+    local tool_path
+
+    if tool_path=$(_go:tool:path "golangci-lint" 2>/dev/null); then
+        if "${tool_path}" version 2>/dev/null | grep -q "version ${version#v}"; then
+            printf '%s\n' "${tool_path}"
+            return 0
+        fi
+    fi
+
+    _go:tool:install "golangci-lint" "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${version}"
+}
+
+function _go:module_dirs {
+    printf '%s\n' "."
+    find . -mindepth 2 -type f -name go.mod \
+        -not -path './.git/*' \
+        -not -path '*/vendor/*' \
+        -exec dirname {} \; \
+        | sed 's#^\./##' \
+        | sort -u
+}
+
+function _go:run_in_modules {
+    local module
+
+    while IFS= read -r module; do
+        if [ "${module}" = "." ]; then
+            "$@" || return 1
+        else
+            (cd "${module}" && "$@") || return 1
+        fi
+    done < <(_go:module_dirs)
+}
+
+function _go:packages {
+    local go_bin
+    local -a patterns=()
+
+    go_bin=$(_go:bin) || return 1
+    if [ "$#" -gt 0 ]; then
+        patterns=("$@")
+        "${go_bin}" list "${patterns[@]}"
+        return 0
+    fi
+
+    _go:run_in_modules "${go_bin}" list ./...
+}
+
+function _go:files {
+    find . -type f -name '*.go' \
+        -not -path './.git/*' \
+        -not -path './.gocache/*' \
+        -not -path './.tmp/*' \
+        -not -path '*/vendor/*' \
+        | sort
+}
+
+function _go:lint:patterns {
+    if [ "$#" -gt 0 ]; then
+        printf '%s\n' "$@"
+        return 0
+    fi
+
+    printf '%s\n' "./..."
+}
+
+function _go:lint:new_from_rev {
+    if git rev-parse --verify --quiet "${GO_LINT_NEW_FROM_REV}^{commit}" >/dev/null; then
+        printf '%s\n' "${GO_LINT_NEW_FROM_REV}"
+        return 0
+    fi
+
+    if [ "${GO_LINT_NEW_FROM_REV}" = "origin/main" ] && git rev-parse --verify --quiet "main^{commit}" >/dev/null; then
+        printf '%s\n' "main"
+        return 0
+    fi
+
+    echo "lint comparison revision not found: ${GO_LINT_NEW_FROM_REV}" >&2
+    echo "fetch the base branch or set GO_LINT_NEW_FROM_REV to an existing revision" >&2
+    return 1
+}
+
+##########################################
+# Go quality
+##########################################
+
+function go:tools:golangci-lint {
+    local version
+
+    version="$(_go:golangci_lint_version)" || return 1
+    _go:tool:install "golangci-lint" "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${version}"
+}
+
+function go:tools:govulncheck {
+    _go:tool:install "govulncheck" "golang.org/x/vuln/cmd/govulncheck@${GO_GOVULNCHECK_VERSION}"
+}
+
+function go:tools:gosec {
+    _go:tool:install "gosec" "github.com/securego/gosec/v2/cmd/gosec@${GO_GOSEC_VERSION}"
+}
+
+function go:tools:all {
+    go:tools:golangci-lint || return 1
+    go:tools:govulncheck || return 1
+    go:tools:gosec || return 1
+}
+
+function go:fmt {
+    local gofmt_bin
+    local -a files=()
+
+    gofmt_bin="$(dirname "$(_go:bin)")/gofmt"
+    while IFS= read -r file; do
+        if [ -n "${file}" ]; then
+            files+=("${file}")
+        fi
+    done < <(_go:files)
+    if [ "${#files[@]}" -eq 0 ]; then
+        echo "No Go files found"
+        return 0
+    fi
+
+    "${gofmt_bin}" -w "${files[@]}"
+}
+
+function go:fix {
+    local go_bin
+    local -a patterns=()
+
+    go_bin=$(_go:bin) || return 1
+    _go:quality:prepare_env || return 1
+    if [ "$#" -eq 0 ]; then
+        _go:run_in_modules "${go_bin}" fix ./...
+        return $?
+    fi
+
+    while IFS= read -r pattern; do
+        if [ -n "${pattern}" ]; then
+            patterns+=("${pattern}")
+        fi
+    done < <(_go:lint:patterns "$@")
+    "${go_bin}" fix "${patterns[@]}"
+}
+
+function go:fmt:check {
+    local gofmt_bin
+    local -a files=()
+    local unformatted
+
+    gofmt_bin="$(dirname "$(_go:bin)")/gofmt"
+    while IFS= read -r file; do
+        if [ -n "${file}" ]; then
+            files+=("${file}")
+        fi
+    done < <(_go:files)
+    if [ "${#files[@]}" -eq 0 ]; then
+        echo "No Go files found"
+        return 0
+    fi
+
+    unformatted="$("${gofmt_bin}" -l "${files[@]}")"
+    if [ -n "${unformatted}" ]; then
+        echo "The following Go files need formatting:"
+        echo "${unformatted}"
+        return 1
+    fi
+}
+
+function go:test {
+    local go_bin
+    local -a packages=()
+
+    go_bin=$(_go:bin) || return 1
+    _go:quality:prepare_env || return 1
+    if [ "$#" -eq 0 ]; then
+        _go:run_in_modules "${go_bin}" test ./...
+        return $?
+    fi
+
+    while IFS= read -r package; do
+        if [ -n "${package}" ]; then
+            packages+=("${package}")
+        fi
+    done < <(_go:packages "$@")
+    "${go_bin}" test "${packages[@]}"
+}
+
+function go:race {
+    local go_bin
+    local -a packages=()
+
+    go_bin=$(_go:bin) || return 1
+    _go:quality:prepare_env || return 1
+    if [ "$#" -eq 0 ]; then
+        _go:run_in_modules "${go_bin}" test -race -count=1 ./...
+        return $?
+    fi
+
+    while IFS= read -r package; do
+        if [ -n "${package}" ]; then
+            packages+=("${package}")
+        fi
+    done < <(_go:packages "$@")
+    "${go_bin}" test -race -count=1 "${packages[@]}"
+}
+
+function go:lint {
+    local golangci_lint_bin
+    local version
+    local -a patterns=()
+
+    version="$(_go:golangci_lint_version)" || return 1
+    golangci_lint_bin=$(_go:golangci_lint:ensure "${version}") || return 1
+    _go:quality:prepare_env || return 1
+    if [ "$#" -eq 0 ]; then
+        _go:run_in_modules "${golangci_lint_bin}" run ./...
+        return $?
+    fi
+
+    while IFS= read -r pattern; do
+        if [ -n "${pattern}" ]; then
+            patterns+=("${pattern}")
+        fi
+    done < <(_go:lint:patterns "$@")
+    "${golangci_lint_bin}" run "${patterns[@]}"
+}
+
+function go:lint:fix {
+    local golangci_lint_bin
+    local version
+    local -a patterns=()
+
+    version="$(_go:golangci_lint_version)" || return 1
+    golangci_lint_bin=$(_go:golangci_lint:ensure "${version}") || return 1
+    _go:quality:prepare_env || return 1
+    if [ "$#" -eq 0 ]; then
+        _go:run_in_modules "${golangci_lint_bin}" run --fix ./...
+        return $?
+    fi
+
+    while IFS= read -r pattern; do
+        if [ -n "${pattern}" ]; then
+            patterns+=("${pattern}")
+        fi
+    done < <(_go:lint:patterns "$@")
+    "${golangci_lint_bin}" run --fix "${patterns[@]}"
+}
+
+function go:lint:new {
+    local golangci_lint_bin
+    local new_from_rev
+    local version
+    local -a patterns=()
+
+    version="$(_go:golangci_lint_version)" || return 1
+    golangci_lint_bin=$(_go:golangci_lint:ensure "${version}") || return 1
+    new_from_rev=$(_go:lint:new_from_rev) || return 1
+    _go:quality:prepare_env || return 1
+    if [ "$#" -eq 0 ]; then
+        _go:run_in_modules "${golangci_lint_bin}" run --new-from-rev="${new_from_rev}" --whole-files ./...
+        return $?
+    fi
+
+    while IFS= read -r pattern; do
+        if [ -n "${pattern}" ]; then
+            patterns+=("${pattern}")
+        fi
+    done < <(_go:lint:patterns "$@")
+    "${golangci_lint_bin}" run --new-from-rev="${new_from_rev}" --whole-files "${patterns[@]}"
+}
+
+function go:lint:report {
+    local golangci_lint_bin
+    local version
+    local -a patterns=()
+
+    version="$(_go:golangci_lint_version)" || return 1
+    golangci_lint_bin=$(_go:golangci_lint:ensure "${version}") || return 1
+    _go:quality:prepare_env || return 1
+    if [ "$#" -eq 0 ]; then
+        _go:run_in_modules "${golangci_lint_bin}" run --issues-exit-code=0 ./...
+        return $?
+    fi
+
+    while IFS= read -r pattern; do
+        if [ -n "${pattern}" ]; then
+            patterns+=("${pattern}")
+        fi
+    done < <(_go:lint:patterns "$@")
+    "${golangci_lint_bin}" run --issues-exit-code=0 "${patterns[@]}"
+}
+
+function go:lint:all {
+    go:lint "$@"
+}
+
+function go:lint:strict {
+    go:lint "$@"
+}
+
+function go:security:govulncheck {
+    local govulncheck_bin
+    local -a packages=()
+
+    govulncheck_bin=$(_go:tool:ensure "govulncheck" "golang.org/x/vuln/cmd/govulncheck@${GO_GOVULNCHECK_VERSION}") || return 1
+    _go:quality:prepare_env || return 1
+    if [ "$#" -eq 0 ]; then
+        _go:run_in_modules "${govulncheck_bin}" ./...
+        return $?
+    fi
+
+    while IFS= read -r package; do
+        if [ -n "${package}" ]; then
+            packages+=("${package}")
+        fi
+    done < <(_go:packages "$@")
+    "${govulncheck_bin}" "${packages[@]}"
+}
+
+function go:security:gosec {
+    local gosec_bin
+    local -a patterns=()
+
+    gosec_bin=$(_go:tool:ensure "gosec" "github.com/securego/gosec/v2/cmd/gosec@${GO_GOSEC_VERSION}") || return 1
+    _go:quality:prepare_env || return 1
+    if [ "$#" -eq 0 ]; then
+        _go:run_in_modules "${gosec_bin}" -exclude-dir=.tmp ./...
+        return $?
+    fi
+
+    patterns=("$@")
+    "${gosec_bin}" -exclude-dir=.tmp "${patterns[@]}"
+}
+
+function go:security:all {
+    go:security:govulncheck "$@" || return 1
+    go:security:gosec "$@" || return 1
+}
+
+function go:quality:pr {
+    go:fmt:check || return 1
+    go:test "$@" || return 1
+    go:lint:new "$@" || return 1
+}
+
+function go:quality:all {
+    go:fmt || return 1
+    go:fix "$@" || return 1
+    go:fmt:check || return 1
+    go:test "$@" || return 1
+    go:race "$@" || return 1
+    go:lint:new "$@" || return 1
+    go:security:all "$@" || return 1
+}
+
+function go:all {
+    go:quality:all "$@"
 }
 
 ##########################################
@@ -311,6 +773,97 @@ function release:changelog:generate {
     git cliff --tag "${release_tag}" --output CHANGELOG.md
 }
 
+##
+## -----
+##
+## modules:*:sync
+##
+## Keep nested modules in sync with the root go-messaging release tag.
+## Missing modules are skipped so the release task can be adopted before every
+## planned module has been implemented.
+##
+## Arguments:
+## @arg 1 {string} tag
+## @flag --tidy Run go mod tidy (use after the root tag is published)
+function _modules:sync_go_messaging {
+    local dir=${1}
+    local tag=${2}
+    shift 2
+
+    local run_tidy=0
+    while [[ "$#" -gt 0 ]]; do
+        case "$1" in
+            --tidy)
+                run_tidy=1
+            ;;
+        esac
+        shift
+    done
+
+    if [ -z "${dir}" ] || [ -z "${tag}" ]; then
+        return 2
+    fi
+
+    if [ ! -f "${dir}/go.mod" ]; then
+        return 0
+    fi
+
+    (cd "${dir}" && go mod edit -require=github.com/goliatone/go-messaging@v${tag}) || return 1
+
+    if [ "${run_tidy}" -eq 1 ]; then
+        (cd "${dir}" && go mod tidy) || return 1
+    fi
+}
+
+function modules:valkey:sync {
+    local tag=${1}
+    shift
+    _modules:sync_go_messaging "transport/valkey" "${tag}" "$@"
+}
+
+function modules:ws:sync {
+    local tag=${1}
+    shift
+    _modules:sync_go_messaging "transport/ws" "${tag}" "$@"
+}
+
+function modules:go-command:sync {
+    local tag=${1}
+    shift
+    _modules:sync_go_messaging "adapters/go-command" "${tag}" "$@"
+}
+
+function modules:sync {
+    local tag=${1}
+    shift
+    local dir
+
+    for dir in ${GO_NESTED_MODULES}; do
+        _modules:sync_go_messaging "${dir}" "${tag}" "$@" || return 1
+    done
+}
+
+function _modules:list {
+    local dir
+
+    for dir in ${GO_NESTED_MODULES}; do
+        if [ -f "${dir}/go.mod" ]; then
+            printf '%s\n' "${dir}"
+        fi
+    done
+}
+
+function _modules:stage {
+    local dir
+
+    for dir in "$@"; do
+        git add "${dir}/go.mod" || return 1
+        if [ -f "${dir}/go.sum" ]; then
+            git add "${dir}/go.sum" || return 1
+        fi
+    done
+}
+
 
 ##
 ## -----
@@ -332,6 +885,10 @@ function release {
     local main_branch="${GIT_MAIN:-main}"
     local release_notes_file
     local release_notes_enabled
+    local module_dir
+    local module_tag
+    local -a module_dirs
+    local -a push_refs
 
     level=""
     message=""
@@ -412,9 +969,19 @@ function release {
         return 1
     fi
 
+    while IFS= read -r module_dir; do
+        module_dirs+=("${module_dir}")
+        module_tag="${module_dir}/${release_tag}"
+        if git rev-parse -q --verify "refs/tags/${module_tag}" >/dev/null; then
+            echo "Nested module release tag already exists: ${module_tag}" >&2
+            return 1
+        fi
+    done < <(_modules:list)
+
     message=${message:-"New ${level} release: ${release_tag}"}
 
     version:set "${tag}" || return 1
+    modules:sync "${tag}" || return 1
 
     if [ "${release_notes_enabled}" -eq 1 ]; then
         release:changelog:generate "${release_tag}" "${release_notes_file}" || return 1
@@ -423,11 +990,22 @@ function release {
     fi
 
     git add "${VERSION_FILE}" CHANGELOG.md || return 1
+    _modules:stage "${module_dirs[@]}" || return 1
     git commit -m "Bump version: ${release_tag}" || return 1
 
     git tag -a "${release_tag}" -m "${message}" || return 1
 
-    git push --atomic origin "HEAD:${main_branch}" "refs/tags/${release_tag}" || return 1
+    for module_dir in "${module_dirs[@]}"; do
+        module_tag="${module_dir}/${release_tag}"
+        git tag -a "${module_tag}" -m "${module_dir} release: ${release_tag}" || return 1
+    done
+
+    push_refs=("HEAD:${main_branch}" "refs/tags/${release_tag}")
+    for module_dir in "${module_dirs[@]}"; do
+        push_refs+=("refs/tags/${module_dir}/${release_tag}")
+    done
+
+    git push --atomic origin "${push_refs[@]}" || return 1
 }
 
 ##########################################
