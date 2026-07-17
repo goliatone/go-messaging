@@ -38,7 +38,7 @@ func NewIngressBindings(bindings ...IngressBinding) (*IngressBindings, error) {
 			return nil, fmt.Errorf("go-command adapter: only explicit event-to-command reinterpretation is supported")
 		}
 		key := ingressBindingKey{kind: binding.EnvelopeKind, messageType: messageType}
-		if existing, ok := resolved[key]; ok && existing != binding.HandlerKind {
+		if _, ok := resolved[key]; ok {
 			return nil, fmt.Errorf("go-command adapter: ambiguous ingress binding for %s", messageType)
 		}
 		resolved[key] = binding.HandlerKind
@@ -57,6 +57,9 @@ func (b *IngressBindings) Resolve(envelope messaging.Envelope) (command.HandlerK
 // ExecuteBound applies an explicit ingress intent before delegating to the
 // normal typed codec and forced-local executor.
 func (i *TypedIngress) ExecuteBound(ctx context.Context, delivery messaging.Delivery, bindings *IngressBindings) (IngressResult, error) {
+	if i == nil || i.provider == nil || i.executor == nil {
+		return IngressResult{}, fmt.Errorf("go-command adapter: typed ingress is not configured")
+	}
 	if delivery == nil || isTypedNil(delivery) {
 		return IngressResult{}, fmt.Errorf("go-command adapter: delivery is required")
 	}

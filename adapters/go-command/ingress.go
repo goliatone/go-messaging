@@ -3,6 +3,7 @@ package commandadapter
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,9 +43,10 @@ func (e RuntimeExecutor) ExecuteInbound(
 }
 
 type TypedIngress struct {
-	provider command.RegistrationProvider
-	codec    TypedCodec
-	executor IngressExecutor
+	provider     command.RegistrationProvider
+	codec        TypedCodec
+	executor     IngressExecutor
+	logicalRoute string
 }
 
 type IngressResult struct {
@@ -95,13 +97,14 @@ func (i *TypedIngress) executeAs(ctx context.Context, delivery messaging.Deliver
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ctx = contextWithDeliveryProvenance(ctx, i.logicalRoute, envelope, delivery.Info())
 	message, err := i.codec.Decode(ctx, registration, envelope.Payload)
 	if err != nil {
-		return IngressResult{}, err
+		return IngressResult{Registration: registration}, err
 	}
 	options, err := dispatchOptionsFromEnvelope(envelope)
 	if err != nil {
-		return IngressResult{}, err
+		return IngressResult{Registration: registration, Message: message}, err
 	}
 
 	if !envelope.Deadline.IsZero() {
@@ -123,10 +126,21 @@ func (i *TypedIngress) executeAs(ctx context.Context, delivery messaging.Deliver
 // More specific retry/dead-letter policy can decorate Execute or replace this
 // conservative reject-on-error mapping.
 func (i *TypedIngress) Handler(ctx context.Context, delivery messaging.Delivery) messaging.HandleResult {
-	if _, err := i.Execute(ctx, delivery); err != nil {
-		return messaging.Reject(err)
+	return i.HandlerWith(DefaultErrorMapper{})(ctx, delivery)
+}
+
+func (i *TypedIngress) HandlerWith(mapper ErrorMapper) messaging.Handler {
+	if mapper == nil || isTypedNil(mapper) {
+		mapper = DefaultErrorMapper{}
 	}
-	return messaging.Complete()
+	return func(ctx context.Context, delivery messaging.Delivery) messaging.HandleResult {
+		_, err := i.Execute(ctx, delivery)
+		attempt := 0
+		if delivery != nil && !isTypedNil(delivery) {
+			attempt = delivery.Info().Attempt
+		}
+		return mapper.Map(err, attempt)
+	}
 }
 
 func commandKind(kind messaging.Kind) (command.HandlerKind, error) {
@@ -157,6 +171,20 @@ func dispatchOptionsFromEnvelope(envelope messaging.Envelope) (command.DispatchO
 		CorrelationID:  strings.TrimSpace(envelope.CorrelationID),
 		IdempotencyKey: strings.TrimSpace(envelope.Headers[HeaderIdempotencyKey]),
 		DedupPolicy:    policy,
+	}
+	if raw := strings.TrimSpace(envelope.Headers[HeaderDelayNanos]); raw != "" {
+		nanos, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || nanos < 0 {
+			return command.DispatchOptions{}, fmt.Errorf("go-command adapter: invalid delay nanos")
+		}
+		options.Delay = time.Duration(nanos)
+	}
+	if raw := strings.TrimSpace(envelope.Headers[HeaderRunAt]); raw != "" {
+		runAt, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return command.DispatchOptions{}, fmt.Errorf("go-command adapter: invalid run_at: %w", err)
+		}
+		options.RunAt = &runAt
 	}
 	if err := command.ValidateDispatchOptions(mode, options); err != nil {
 		return command.DispatchOptions{}, err

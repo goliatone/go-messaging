@@ -17,7 +17,10 @@ func TestCatalogCodecRoundTripsExplicitWireDTO(t *testing.T) {
 		id: "test.create", messageType: "test.create", kind: command.HandlerKindCommand,
 		request: reflect.TypeFor[createMessage](), newMessage: func() any { return &createMessage{} },
 	}
-	provider, _ := command.NewMessageRegistrationIndex(registration)
+	provider, err := command.NewMessageRegistrationIndex(registration)
+	if err != nil {
+		t.Fatal(err)
+	}
 	codec, err := NewJSONCatalogCodec(provider, JSONTypedCodec{}, CatalogBinding{
 		CatalogID: "create", RegistrationID: "test.create", Kind: command.HandlerKindCommand, SchemaVersion: "1",
 	})
@@ -59,12 +62,15 @@ func TestCatalogCodecValidatesCoverageAndAmbiguity(t *testing.T) {
 		id: "test.create", messageType: "test.create", kind: command.HandlerKindCommand,
 		request: reflect.TypeFor[createMessage](), newMessage: func() any { return &createMessage{} },
 	}
-	provider, _ := command.NewMessageRegistrationIndex(registration)
+	provider, err := command.NewMessageRegistrationIndex(registration)
+	if err != nil {
+		t.Fatal(err)
+	}
 	codec, err := NewJSONCatalogCodec(provider, JSONTypedCodec{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := codec.ValidateCoverage(registration); err == nil {
+	if validationErr := codec.ValidateCoverage(registration); validationErr == nil {
 		t.Fatal("expected missing coverage")
 	}
 	_, err = NewJSONCatalogCodec(provider, JSONTypedCodec{},
@@ -76,44 +82,93 @@ func TestCatalogCodecValidatesCoverageAndAmbiguity(t *testing.T) {
 	}
 }
 
+func TestCatalogCodecRejectsSchemaAndRegistrationDrift(t *testing.T) {
+	registration := ingressRegistration{
+		id: "test.create", messageType: "test.create", kind: command.HandlerKindCommand,
+		request: reflect.TypeFor[createMessage](), newMessage: func() any { return &createMessage{} },
+	}
+	provider, err := command.NewMessageRegistrationIndex(registration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codec, err := NewJSONCatalogCodec(provider, JSONTypedCodec{}, CatalogBinding{
+		CatalogID: "create", RegistrationID: "test.create", Kind: command.HandlerKindCommand, SchemaVersion: "1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dto := CatalogDispatchDTO{
+		Version: CatalogWireVersion, SchemaVersion: "2", CommandID: "create",
+		HandlerKind: string(command.HandlerKindCommand), Payload: map[string]any{"name": "Ada"},
+	}
+	if _, _, _, decodeErr := codec.DecodeCatalog(context.Background(), dto, provider); decodeErr == nil {
+		t.Fatal("expected schema mismatch")
+	}
+	dto.SchemaVersion = "1"
+	drifted := ingressRegistration{
+		id: "test.create", messageType: "test.create.v2", kind: command.HandlerKindCommand,
+		request: reflect.TypeFor[lookupMessage](), newMessage: func() any { return &lookupMessage{} },
+	}
+	driftedProvider, err := command.NewMessageRegistrationIndex(drifted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, decodeErr := codec.DecodeCatalog(context.Background(), dto, driftedProvider); decodeErr == nil {
+		t.Fatal("expected incompatible registration rejection")
+	}
+}
+
 func TestCatalogIngressRequiresExplicitEventAuthorizationAndUsesPolicyExecutor(t *testing.T) {
 	registration := ingressRegistration{
 		id: "test.create", messageType: "test.create", kind: command.HandlerKindCommand,
 		request: reflect.TypeFor[createMessage](), newMessage: func() any { return &createMessage{} },
 	}
-	provider, _ := command.NewMessageRegistrationIndex(registration)
+	provider, err := command.NewMessageRegistrationIndex(registration)
+	if err != nil {
+		t.Fatal(err)
+	}
 	newCodec := func(allow bool) *JSONCatalogCodec {
-		codec, err := NewJSONCatalogCodec(provider, JSONTypedCodec{}, CatalogBinding{
+		codec, codecErr := NewJSONCatalogCodec(provider, JSONTypedCodec{}, CatalogBinding{
 			CatalogID: "create", RegistrationID: "test.create", Kind: command.HandlerKindCommand,
 			SchemaVersion: "1", AllowEventToCommand: allow,
 		})
-		if err != nil {
-			t.Fatal(err)
+		if codecErr != nil {
+			t.Fatal(codecErr)
 		}
 		return codec
 	}
 	dto := CatalogDispatchDTO{
-		Version: CatalogWireVersion, CommandID: "create", HandlerKind: string(command.HandlerKindCommand),
+		Version: CatalogWireVersion, SchemaVersion: "1", CommandID: "create", HandlerKind: string(command.HandlerKindCommand),
 		Payload: map[string]any{"name": "Ada"}, Options: CatalogOptionsDTO{Mode: "inline", CorrelationID: "correlation-1"},
 	}
-	payload, _ := json.Marshal(dto)
+	payload, err := json.Marshal(dto)
+	if err != nil {
+		t.Fatal(err)
+	}
 	delivery := deliveryFor(messaging.KindEvent, CatalogEnvelopeType, payload)
 
-	denied, _ := NewCatalogIngress(provider, newCodec(false), catalogExecutorFunc(func(context.Context, command.CommandDispatchRequest, command.MessageRegistration, any, IngressMetadata) (command.DispatchOutcome, error) {
+	denied, err := NewCatalogIngress(provider, newCodec(false), catalogExecutorFunc(func(context.Context, command.CommandDispatchRequest, command.MessageRegistration, any, IngressMetadata) (command.DispatchOutcome, error) {
 		t.Fatal("denied event reached executor")
 		return command.DispatchOutcome{}, nil
 	}))
-	if _, err := denied.Execute(context.Background(), delivery); err == nil {
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, executeErr := denied.Execute(context.Background(), delivery); executeErr == nil {
 		t.Fatal("expected event authorization failure")
 	}
 
 	called := false
-	allowed, _ := NewCatalogIngress(provider, newCodec(true), catalogExecutorFunc(func(_ context.Context, request command.CommandDispatchRequest, registration command.MessageRegistration, message any, metadata IngressMetadata) (command.DispatchOutcome, error) {
-		called = request.CommandID == "test.create" && registration.ID() == "test.create" && message.(*createMessage).Name == "Ada" && metadata.EnvelopeKind == messaging.KindEvent
+	allowed, err := NewCatalogIngress(provider, newCodec(true), catalogExecutorFunc(func(_ context.Context, request command.CommandDispatchRequest, registration command.MessageRegistration, message any, metadata IngressMetadata) (command.DispatchOutcome, error) {
+		decoded, ok := message.(*createMessage)
+		called = ok && request.CommandID == "test.create" && registration.ID() == "test.create" && decoded.Name == "Ada" && metadata.EnvelopeKind == messaging.KindEvent
 		return command.DispatchOutcome{Receipt: command.DispatchReceipt{Accepted: true, Mode: command.ExecutionModeInline, CommandID: registration.ID(), CorrelationID: request.Options.CorrelationID}}, nil
 	}))
-	if _, err := allowed.Execute(context.Background(), delivery); err != nil {
+	if err != nil {
 		t.Fatal(err)
+	}
+	if _, executeErr := allowed.Execute(context.Background(), delivery); executeErr != nil {
+		t.Fatal(executeErr)
 	}
 	if !called {
 		t.Fatal("policy executor did not receive canonical typed dispatch")
