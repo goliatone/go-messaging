@@ -94,3 +94,29 @@ func TestReplyCodecPreservesRetryClassificationWithoutExposingMessage(t *testing
 		t.Fatalf("retry classification lost: %v", err)
 	}
 }
+
+func TestFailureProjectionUsesStableAdapterAndMessagingCodes(t *testing.T) {
+	tests := []struct {
+		err       error
+		category  string
+		textCode  string
+		retryable bool
+	}{
+		{ErrClaimInProgress, string(gerrors.CategoryConflict), TextCodeIdempotencyInProgress, true},
+		{ErrClaimConflict, string(gerrors.CategoryConflict), TextCodeIdempotencyConflict, false},
+		{expiredEnvelopeDeadline(context.DeadlineExceeded), string(gerrors.CategoryOperation), TextCodeEnvelopeDeadlineExpired, false},
+		{messaging.ErrNotPublished, string(gerrors.CategoryExternal), messaging.TextCodeNotPublished, true},
+		{messaging.ErrPublishAmbiguous, string(gerrors.CategoryExternal), messaging.TextCodePublishAmbiguous, false},
+	}
+	for _, test := range tests {
+		t.Run(test.textCode, func(t *testing.T) {
+			failure := failureFromError(test.err)
+			if failure.Category != test.category || failure.TextCode != test.textCode || failure.Retryable != test.retryable {
+				t.Fatalf("failure = %#v", failure)
+			}
+			if failure.Message != "remote command execution failed" {
+				t.Fatalf("unsafe failure message %q", failure.Message)
+			}
+		})
+	}
+}

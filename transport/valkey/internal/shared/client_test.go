@@ -3,6 +3,7 @@ package shared
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,16 +12,59 @@ import (
 )
 
 func TestPublicationFailureIsAmbiguousAfterAttempt(t *testing.T) {
-	outcome, err := PublicationFailure("xadd", context.DeadlineExceeded, true)
-	if outcome != messaging.PublishAmbiguous || !errors.Is(err, messaging.ErrPublishAmbiguous) || !errors.Is(err, context.DeadlineExceeded) {
+	cause := errors.New("password=secret")
+	outcome, err := PublicationFailure("xadd", cause, true)
+	if outcome != messaging.PublishAmbiguous || !errors.Is(err, messaging.ErrPublishAmbiguous) || !errors.Is(err, cause) {
 		t.Fatalf("outcome=%q err=%v", outcome, err)
+	}
+	structured := messaging.AsGoError(err)
+	if structured.Category.String() != "external" || structured.TextCode != messaging.TextCodePublishAmbiguous {
+		t.Fatalf("structured error = %#v", structured)
+	}
+	if strings.Contains(structured.Error(), "secret") {
+		t.Fatalf("structured error exposed provider cause: %v", structured)
+	}
+	if structured.Metadata["transport"] != "valkey" || structured.Metadata["operation"] != "xadd" || structured.Metadata["temporary"] != true {
+		t.Fatalf("metadata = %#v", structured.Metadata)
+	}
+	if retryable := messaging.AsRetryableError(err); retryable != nil {
+		t.Fatalf("attempted publication must not be automatically retryable: %v", retryable)
 	}
 }
 
 func TestPublicationFailureIsDefiniteBeforeAttempt(t *testing.T) {
-	outcome, err := PublicationFailure("publish", context.Canceled, false)
-	if outcome != messaging.PublishDefinitelyNotPublished || !errors.Is(err, messaging.ErrNotPublished) || !errors.Is(err, context.Canceled) {
+	cause := errors.New("address=secret")
+	outcome, err := PublicationFailure("publish", cause, false)
+	if outcome != messaging.PublishDefinitelyNotPublished || !errors.Is(err, messaging.ErrNotPublished) || !errors.Is(err, cause) {
 		t.Fatalf("outcome=%q err=%v", outcome, err)
+	}
+	retryable := messaging.AsRetryableError(err)
+	if retryable == nil || !retryable.IsRetryable() || retryable.TextCode != messaging.TextCodeNotPublished {
+		t.Fatalf("pre-attempt publication projection = %#v", retryable)
+	}
+	if strings.Contains(retryable.Error(), "secret") || !errors.Is(retryable, cause) {
+		t.Fatalf("retryable projection is unsafe or incompatible: %v", retryable)
+	}
+}
+
+func TestLifecycleClassificationProjectsStableRetryPolicy(t *testing.T) {
+	providerErr := errors.New("credential=secret")
+	notReady := Classify("subscribe", providerErr)
+	structured := messaging.AsGoError(notReady)
+	if structured.TextCode != messaging.TextCodeSubscriptionNotReady || strings.Contains(structured.Error(), "secret") {
+		t.Fatalf("not-ready projection = %v", structured)
+	}
+	if retryable := messaging.AsRetryableError(notReady); retryable == nil || !retryable.IsRetryable() {
+		t.Fatalf("not-ready failure should be retryable: %#v", retryable)
+	}
+
+	closed := Classify("receive", context.Canceled)
+	structured = messaging.AsGoError(closed)
+	if structured.TextCode != messaging.TextCodeSubscriptionClosed {
+		t.Fatalf("closed projection = %#v", structured)
+	}
+	if retryable := messaging.AsRetryableError(closed); retryable != nil {
+		t.Fatalf("closed subscription must not imply restart: %v", retryable)
 	}
 }
 

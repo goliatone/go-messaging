@@ -121,6 +121,13 @@ func TestAckCountMustConfirmExactlyOneEntry(t *testing.T) {
 		if !errors.Is(err, messaging.ErrAcknowledgement) {
 			t.Fatalf("count=%d err=%v", count, err)
 		}
+		structured := messaging.AsGoError(err)
+		if structured.TextCode != messaging.TextCodeAcknowledgementFailed || structured.Metadata["transport"] != "valkey.streams" || structured.Metadata["operation"] != "xack" {
+			t.Fatalf("count=%d structured=%#v", count, structured)
+		}
+		if retryable := messaging.AsRetryableError(err); retryable == nil || !retryable.IsRetryable() {
+			t.Fatalf("count=%d retryable=%#v", count, retryable)
+		}
 	}
 }
 
