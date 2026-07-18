@@ -4,7 +4,7 @@ go 1.23.4
 
 require (
 	github.com/goliatone/go-command v0.23.1
-	github.com/goliatone/go-errors v0.10.0
+	github.com/goliatone/go-errors v0.11.0
 	github.com/goliatone/go-messaging v0.0.0
 )
 
