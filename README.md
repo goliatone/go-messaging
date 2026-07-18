@@ -76,7 +76,9 @@ if retryable := messaging.AsRetryableError(err); retryable != nil {
 ```
 
 Retryability is conservative: a definitely-not-published operation may be
-retried, while an ambiguous publication is never automatically retryable.
+retried, while an ambiguous publication is never automatically retryable. A
+non-nil `AsRetryableError` result always reports `IsRetryable() == true`;
+disabled or critical-severity retryable values produce `nil`.
 Structured logging includes only bounded classification and transport metadata;
 provider causes and payloads remain excluded.
 
