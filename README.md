@@ -58,6 +58,28 @@ _, err = router.Publish(ctx, "domain-events", event)
 
 Use Valkey Streams when durable delivery, acknowledgement, competing consumers, replay, or dead-lettering is required. Use Pub/Sub for ephemeral fanout. Routes are logical application names; provider destinations remain inside route bindings.
 
+## Structured errors
+
+Messaging keeps its sentinel and typed errors compatible with the standard
+`errors.Is` and `errors.As` APIs. At logging, API, or adapter boundaries, project
+an error into the shared `go-errors` contract without changing the original:
+
+```go
+if structured := messaging.AsGoError(err); structured != nil {
+    logger.LogAttrs(ctx, slog.LevelError, "publish failed", messaging.ErrorSlogAttributes(err)...)
+}
+
+if retryable := messaging.AsRetryableError(err); retryable != nil {
+    delay := retryable.RetryDelay(attempt)
+    // Apply the application's retry policy.
+}
+```
+
+Retryability is conservative: a definitely-not-published operation may be
+retried, while an ambiguous publication is never automatically retryable.
+Structured logging includes only bounded classification and transport metadata;
+provider causes and payloads remain excluded.
+
 ## Runnable chat example
 
 [`examples/chat-demo`](examples/chat-demo/README.md) provides a complete browser
