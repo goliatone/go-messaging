@@ -391,14 +391,25 @@ func validateAckCount(id string, count int64) error {
 		Cause: fmt.Errorf("valkey acknowledged %d entries for delivery %q", count, id),
 	}
 }
+
 func (s *subscription) deadLetter(ctx context.Context, id, raw string, reason error) error {
 	message := safeDeadLetterReason(reason)
 	destination := s.source.Name + s.driver.config.DeadLetterSuffix
 	_, err := s.client.Do(ctx, s.client.B().Xadd().Key(destination).Id("*").FieldValue().FieldValue("original_stream", s.source.Name).FieldValue("original_id", id).FieldValue("reason", message).FieldValue(envelopeField, raw).Build()).ToString()
 	if err != nil {
-		return &messaging.TransportError{Class: messaging.ErrDeadLetter, Transport: "valkey.streams", Operation: "dead-letter", Cause: err}
+		return newDeadLetterError(err)
 	}
 	return nil
+}
+
+func newDeadLetterError(cause error) error {
+	if cause == nil {
+		return nil
+	}
+	return &messaging.TransportError{
+		Class: messaging.ErrDeadLetter, Transport: "valkey.streams",
+		Operation: "dead-letter", Cause: cause,
+	}
 }
 
 func safeDeadLetterReason(reason error) string {

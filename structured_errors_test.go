@@ -197,6 +197,41 @@ func TestAsGoErrorPreservesExistingStructuredErrors(t *testing.T) {
 	}
 }
 
+func TestAsRetryableErrorRejectsDisabledRetryableValues(t *testing.T) {
+	tests := []struct {
+		name string
+		err  *gerrors.RetryableError
+	}{
+		{
+			name: "non-retryable constructor",
+			err:  gerrors.NewNonRetryable("invalid", gerrors.CategoryValidation),
+		},
+		{
+			name: "retry flag disabled",
+			err:  gerrors.NewRetryableExternal("provider unavailable").WithRetryable(false),
+		},
+		{
+			name: "critical severity",
+			err:  gerrors.NewRetryableExternal("provider corrupt").WithSeverity(gerrors.SeverityCritical),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.err.IsRetryable() {
+				t.Fatal("fixture unexpectedly reports retryable")
+			}
+			wrapped := fmt.Errorf("application boundary: %w", test.err)
+			if got := AsRetryableError(wrapped); got != nil {
+				t.Fatalf("disabled retryable value returned as retry signal: %v", got)
+			}
+			if got := AsGoError(wrapped); got != test.err.BaseError {
+				t.Fatalf("structured fields were not preserved: %p != %p", got, test.err.BaseError)
+			}
+		})
+	}
+}
+
 func TestUnknownErrorProjectionIsSafeAndCompatible(t *testing.T) {
 	cause := errors.New("credential=secret")
 	structured := AsGoError(cause)

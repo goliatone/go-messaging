@@ -131,8 +131,7 @@ func (JSONReplyCodec) Decode(_ context.Context, registration command.MessageRegi
 func failureFromError(err error) *FailureDTO {
 	failure := &FailureDTO{Category: string(gerrors.CategoryInternal), Message: "remote command execution failed"}
 	projected := projectAdapterError(err)
-	var retryable *gerrors.RetryableError
-	if gerrors.As(projected, &retryable) && retryable.BaseError != nil {
+	if retryable := projected.retryable; retryable != nil && retryable.BaseError != nil {
 		failure.Category = string(retryable.Category)
 		failure.Code = retryable.Code
 		failure.TextCode = retryable.TextCode
@@ -140,8 +139,7 @@ func failureFromError(err error) *FailureDTO {
 		failure.RetryAfterNanos = retryable.RetryDelay(1).Nanoseconds()
 		return failure
 	}
-	var structured *gerrors.Error
-	if gerrors.As(projected, &structured) {
+	if structured := projected.structured; structured != nil {
 		failure.Category = string(structured.Category)
 		failure.Code = structured.Code
 		failure.TextCode = structured.TextCode

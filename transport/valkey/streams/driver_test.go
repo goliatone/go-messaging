@@ -3,6 +3,7 @@ package streams
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -103,6 +104,35 @@ func TestDeadLetterReasonDoesNotExposeArbitraryErrors(t *testing.T) {
 	}
 	if got := safeDeadLetterReason(context.DeadlineExceeded); got != context.DeadlineExceeded.Error() {
 		t.Fatalf("classified reason = %q", got)
+	}
+}
+
+func TestDeadLetterFailureProjectsSafeRetryableClassification(t *testing.T) {
+	cause := errors.New("password=secret")
+	err := newDeadLetterError(cause)
+	if !errors.Is(err, messaging.ErrDeadLetter) || !errors.Is(err, cause) {
+		t.Fatalf("dead-letter error lost classification or cause: %v", err)
+	}
+
+	structured := messaging.AsGoError(err)
+	if structured.Category != "external" || structured.TextCode != messaging.TextCodeDeadLetterFailed {
+		t.Fatalf("structured error = %#v", structured)
+	}
+	if structured.Metadata["transport"] != "valkey.streams" ||
+		structured.Metadata["operation"] != "dead-letter" ||
+		structured.Metadata["temporary"] != false {
+		t.Fatalf("structured metadata = %#v", structured.Metadata)
+	}
+	if strings.Contains(structured.Error(), "secret") {
+		t.Fatalf("structured error exposed provider cause: %v", structured)
+	}
+
+	retryable := messaging.AsRetryableError(err)
+	if retryable == nil || !retryable.IsRetryable() || retryable.TextCode != messaging.TextCodeDeadLetterFailed {
+		t.Fatalf("retryable projection = %#v", retryable)
+	}
+	if strings.Contains(retryable.Error(), "secret") || strings.Contains(fmt.Sprint(messaging.ErrorSlogAttributes(err)), "secret") {
+		t.Fatalf("dead-letter diagnostics exposed provider cause")
 	}
 }
 

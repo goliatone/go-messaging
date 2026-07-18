@@ -56,7 +56,8 @@ func TestProjectAdapterErrorMapsLocalSentinels(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.textCode, func(t *testing.T) {
-			projected := projectAdapterError(test.err)
+			projection := projectAdapterError(test.err)
+			projected := projection.asError()
 			var structured *gerrors.Error
 			if !errors.As(projected, &structured) || structured.TextCode != test.textCode {
 				t.Fatalf("projected error = %#v", projected)
@@ -83,7 +84,8 @@ func TestProjectAdapterErrorHonorsOuterMessagingClassification(t *testing.T) {
 		t.Fatalf("root projection inherited provider retryability: %v", retryable)
 	}
 
-	projected := projectAdapterError(err)
+	projection := projectAdapterError(err)
+	projected := projection.asError()
 	var structured *gerrors.Error
 	if !errors.As(projected, &structured) {
 		t.Fatalf("projected error = %#v", projected)
@@ -91,8 +93,8 @@ func TestProjectAdapterErrorHonorsOuterMessagingClassification(t *testing.T) {
 	if structured.TextCode != messaging.TextCodePublishAmbiguous || structured.Category != gerrors.CategoryExternal {
 		t.Fatalf("structured error = %#v", structured)
 	}
-	if retryable, ok := projected.(*gerrors.RetryableError); ok {
-		t.Fatalf("ambiguous publication inherited provider retryability: %v", retryable)
+	if projection.retryable != nil {
+		t.Fatalf("ambiguous publication inherited provider retryability: %v", projection.retryable)
 	}
 	var providerCompatibility *gerrors.RetryableError
 	if strings.Contains(projected.Error(), "secret") ||
@@ -108,9 +110,9 @@ func TestProjectAdapterErrorDoesNotMapLocalSentinelThroughMessagingWrapper(t *te
 		Cause: ErrClaimInProgress,
 	}
 
-	projected := projectAdapterError(err)
-	structured, ok := projected.(*gerrors.Error)
-	if !ok || structured.TextCode != messaging.TextCodePublishAmbiguous {
+	projection := projectAdapterError(err)
+	projected := projection.asError()
+	if projection.structured == nil || projection.structured.TextCode != messaging.TextCodePublishAmbiguous {
 		t.Fatalf("outer messaging class was overridden by local cause: %#v", projected)
 	}
 	if !errors.Is(projected, ErrClaimInProgress) || !errors.As(projected, new(*messaging.TransportError)) {

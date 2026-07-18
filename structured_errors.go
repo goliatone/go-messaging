@@ -48,6 +48,13 @@ type safeStructuredSource struct {
 	cause   error
 }
 
+type structuredErrorBoundary struct {
+	policy     structuredErrorPolicy
+	metadata   map[string]any
+	structured *gerrors.Error
+	retryable  *gerrors.RetryableError
+}
+
 func (e *safeStructuredSource) Error() string {
 	if e == nil {
 		return "messaging: operation failed"
@@ -70,12 +77,25 @@ func AsGoError(err error) *gerrors.Error {
 	if err == nil {
 		return nil
 	}
-	var existing *gerrors.Error
-	if errors.As(err, &existing) {
-		return existing
+	if boundary, ok := firstStructuredErrorBoundary(err); ok {
+		switch {
+		case boundary.structured != nil:
+			return boundary.structured
+		case boundary.retryable != nil:
+			if boundary.retryable.BaseError != nil {
+				return boundary.retryable.BaseError
+			}
+			return newStructuredErrorProjection(err, policyForClass(err), nil)
+		default:
+			return newStructuredErrorProjection(err, boundary.policy, boundary.metadata)
+		}
 	}
 
 	policy, metadata := structuredPolicyFor(err)
+	return newStructuredErrorProjection(err, policy, metadata)
+}
+
+func newStructuredErrorProjection(err error, policy structuredErrorPolicy, metadata map[string]any) *gerrors.Error {
 	structured := gerrors.NewWithLocation(policy.message, policy.category, nil).
 		WithTextCode(policy.textCode).
 		WithSeverity(policy.severity)
@@ -88,20 +108,36 @@ func AsGoError(err error) *gerrors.Error {
 
 // AsRetryableError projects err as retryable only when its stable messaging
 // class proves that retrying is safe. In particular, ambiguous publications
-// are never retryable even when a transport marks the failure temporary.
+// are never retryable even when a transport marks the failure temporary. A
+// non-nil return value is guaranteed to report IsRetryable() == true.
 func AsRetryableError(err error) *gerrors.RetryableError {
 	if err == nil {
 		return nil
 	}
-	var existing *gerrors.RetryableError
-	if errors.As(err, &existing) {
-		return existing
+	if boundary, ok := firstStructuredErrorBoundary(err); ok {
+		switch {
+		case boundary.retryable != nil:
+			if boundary.retryable.IsRetryable() {
+				return boundary.retryable
+			}
+			return nil
+		case boundary.structured != nil:
+			return nil //nolint:nilerr // An existing structured error is an explicit non-retry boundary.
+		case !boundary.policy.retryable:
+			return nil
+		default:
+			return newRetryableErrorProjection(err, boundary.policy, boundary.metadata)
+		}
 	}
 
 	policy, metadata := structuredPolicyFor(err)
 	if !policy.retryable {
 		return nil
 	}
+	return newRetryableErrorProjection(err, policy, metadata)
+}
+
+func newRetryableErrorProjection(err error, policy structuredErrorPolicy, metadata map[string]any) *gerrors.RetryableError {
 	retryable := gerrors.NewRetryable(policy.message, policy.category).
 		WithTextCode(policy.textCode).
 		WithRetryDelay(policy.retryDelay).
@@ -112,6 +148,55 @@ func AsRetryableError(err error) *gerrors.RetryableError {
 		retryable = retryable.WithMetadata(metadata)
 	}
 	return retryable
+}
+
+// firstStructuredErrorBoundary finds the outermost owner of structured error
+// semantics. Messaging wrappers intentionally stop traversal so their stable
+// class cannot be overridden by a provider cause. Existing go-errors values
+// also stop traversal so application-supplied structure passes through.
+func firstStructuredErrorBoundary(err error) (structuredErrorBoundary, bool) {
+	if err == nil {
+		return structuredErrorBoundary{}, false
+	}
+
+	switch current := err.(type) { //nolint:errorlint // Direct inspection preserves outer-to-inner boundary precedence.
+	case *MessageError:
+		if current != nil {
+			return structuredErrorBoundary{policy: policyForClass(ErrMessageHandling)}, true
+		}
+	case *TransportError:
+		if current != nil {
+			return structuredErrorBoundary{
+				policy: policyForClass(current.Class),
+				metadata: safeStructuredMetadata(map[string]any{
+					"transport": current.Transport,
+					"operation": current.Operation,
+					"temporary": current.Temporary,
+				}),
+			}, true
+		}
+	case *gerrors.RetryableError:
+		if current != nil {
+			return structuredErrorBoundary{retryable: current}, true
+		}
+	case *gerrors.Error:
+		if current != nil {
+			return structuredErrorBoundary{structured: current}, true
+		}
+	}
+
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, child := range joined.Unwrap() {
+			if boundary, found := firstStructuredErrorBoundary(child); found {
+				return boundary, true
+			}
+		}
+		return structuredErrorBoundary{}, false
+	}
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		return firstStructuredErrorBoundary(wrapped.Unwrap())
+	}
+	return structuredErrorBoundary{}, false
 }
 
 // ErrorSlogAttributes returns structured attributes safe for library logging.
