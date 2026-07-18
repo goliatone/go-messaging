@@ -3,6 +3,7 @@ package commandadapter
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	gerrors "github.com/goliatone/go-errors"
@@ -69,5 +70,54 @@ func TestProjectAdapterErrorMapsLocalSentinels(t *testing.T) {
 				t.Fatalf("retryable = %v, want %v", gotRetryable, test.retryable)
 			}
 		})
+	}
+}
+
+func TestProjectAdapterErrorHonorsOuterMessagingClassification(t *testing.T) {
+	provider := gerrors.NewRetryableExternal("password=secret").WithTextCode("PROVIDER_UNAVAILABLE")
+	err := &messaging.TransportError{
+		Class: messaging.ErrPublishAmbiguous, Transport: "valkey", Operation: "publish",
+		Temporary: true, Cause: provider,
+	}
+	if retryable := messaging.AsRetryableError(err); retryable != nil {
+		t.Fatalf("root projection inherited provider retryability: %v", retryable)
+	}
+
+	projected := projectAdapterError(err)
+	var structured *gerrors.Error
+	if !errors.As(projected, &structured) {
+		t.Fatalf("projected error = %#v", projected)
+	}
+	if structured.TextCode != messaging.TextCodePublishAmbiguous || structured.Category != gerrors.CategoryExternal {
+		t.Fatalf("structured error = %#v", structured)
+	}
+	if retryable, ok := projected.(*gerrors.RetryableError); ok {
+		t.Fatalf("ambiguous publication inherited provider retryability: %v", retryable)
+	}
+	var providerCompatibility *gerrors.RetryableError
+	if strings.Contains(projected.Error(), "secret") ||
+		!errors.As(projected, new(*messaging.TransportError)) ||
+		!errors.As(projected, &providerCompatibility) {
+		t.Fatalf("projection lost safety or outer compatibility: %v", projected)
+	}
+}
+
+func TestProjectAdapterErrorDoesNotMapLocalSentinelThroughMessagingWrapper(t *testing.T) {
+	err := &messaging.TransportError{
+		Class: messaging.ErrPublishAmbiguous, Transport: "go-command", Operation: "dispatch",
+		Cause: ErrClaimInProgress,
+	}
+
+	projected := projectAdapterError(err)
+	structured, ok := projected.(*gerrors.Error)
+	if !ok || structured.TextCode != messaging.TextCodePublishAmbiguous {
+		t.Fatalf("outer messaging class was overridden by local cause: %#v", projected)
+	}
+	if !errors.Is(projected, ErrClaimInProgress) || !errors.As(projected, new(*messaging.TransportError)) {
+		t.Fatalf("projection lost cause compatibility: %v", projected)
+	}
+	result := (DefaultErrorMapper{}).Map(err, 1)
+	if result.Disposition != messaging.DispositionReject || result.RetryAfter != 0 {
+		t.Fatalf("outer ambiguous class lost settlement authority: %#v", result)
 	}
 }

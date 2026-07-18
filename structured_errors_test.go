@@ -102,6 +102,69 @@ func TestAsGoErrorClassifiesMessageWrapperBeforeItsCause(t *testing.T) {
 	}
 }
 
+func TestOuterMessagingWrapperOwnsStructuredClassification(t *testing.T) {
+	provider := gerrors.NewRetryableExternal("password=secret").WithTextCode("PROVIDER_UNAVAILABLE")
+	tests := []struct {
+		name     string
+		err      error
+		category gerrors.Category
+		textCode string
+		target   any
+	}{
+		{
+			name: "transport",
+			err: &TransportError{
+				Class: ErrPublishAmbiguous, Transport: "valkey", Operation: "publish",
+				Temporary: true, Cause: provider,
+			},
+			category: gerrors.CategoryExternal,
+			textCode: TextCodePublishAmbiguous,
+			target:   new(*TransportError),
+		},
+		{
+			name:     "message",
+			err:      NewMessageError(provider),
+			category: gerrors.CategoryHandler,
+			textCode: TextCodeMessageHandlingFailed,
+			target:   new(*MessageError),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			structured := AsGoError(fmt.Errorf("consumer boundary: %w", test.err))
+			if structured.Category != test.category || structured.TextCode != test.textCode {
+				t.Fatalf("structured error = %#v", structured)
+			}
+			if strings.Contains(structured.Error(), "secret") || strings.Contains(structured.Error(), "PROVIDER_UNAVAILABLE") {
+				t.Fatalf("structured error exposed provider details: %v", structured)
+			}
+			if !errors.Is(structured, provider) || !errors.As(structured, test.target) {
+				t.Fatalf("structured error lost outer/source compatibility: %v", structured)
+			}
+			if retryable := AsRetryableError(test.err); retryable != nil {
+				t.Fatalf("outer non-retryable class was overridden: %v", retryable)
+			}
+		})
+	}
+}
+
+func TestExistingStructuredErrorOutsideMessagingWrapperRemainsAuthoritative(t *testing.T) {
+	transport := &TransportError{
+		Class: ErrPublishAmbiguous, Transport: "valkey", Operation: "publish",
+		Cause: errors.New("password=secret"),
+	}
+	existing := gerrors.Wrap(transport, gerrors.CategoryConflict, "application classification").
+		WithTextCode("APPLICATION_CONFLICT")
+
+	if got := AsGoError(existing); got != existing {
+		t.Fatalf("outer application structured error was replaced: %p != %p", got, existing)
+	}
+	if got := AsRetryableError(existing); got != nil {
+		t.Fatalf("non-retryable application structure inherited source retry policy: %v", got)
+	}
+}
+
 func TestAsRetryableErrorUsesOnlySafeClasses(t *testing.T) {
 	retryableClasses := []error{ErrNotPublished, ErrSubscriptionNotReady, ErrAcknowledgement, ErrDeadLetter}
 	for _, err := range retryableClasses {

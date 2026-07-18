@@ -120,3 +120,26 @@ func TestFailureProjectionUsesStableAdapterAndMessagingCodes(t *testing.T) {
 		})
 	}
 }
+
+func TestFailureProjectionDoesNotInheritRetryabilityFromMessagingCause(t *testing.T) {
+	provider := gerrors.NewRetryableExternal("password=secret").WithTextCode("PROVIDER_UNAVAILABLE")
+	err := &messaging.TransportError{
+		Class: messaging.ErrPublishAmbiguous, Transport: "valkey", Operation: "publish",
+		Temporary: true, Cause: provider,
+	}
+
+	failure := failureFromError(err)
+	if failure.Category != string(gerrors.CategoryExternal) || failure.TextCode != messaging.TextCodePublishAmbiguous {
+		t.Fatalf("failure = %#v", failure)
+	}
+	if failure.Retryable || failure.RetryAfterNanos != 0 {
+		t.Fatalf("failure inherited provider retry policy: %#v", failure)
+	}
+	encoded, encodeErr := json.Marshal(failure)
+	if encodeErr != nil {
+		t.Fatal(encodeErr)
+	}
+	if strings.Contains(string(encoded), "secret") || strings.Contains(string(encoded), "PROVIDER_UNAVAILABLE") {
+		t.Fatalf("failure exposed provider details: %s", encoded)
+	}
+}
