@@ -6,9 +6,8 @@ import (
 	"testing"
 	"time"
 
-	coreadmin "github.com/goliatone/go-admin/admin"
+	admin "github.com/goliatone/go-admin/admin"
 	"github.com/goliatone/go-admin/admin/commandruntest"
-	admin "github.com/goliatone/go-admin/pkg/admin"
 	messaging "github.com/goliatone/go-messaging"
 	"github.com/goliatone/go-messaging/internal/testkit"
 )
@@ -20,7 +19,7 @@ const (
 )
 
 func TestTransportContract(t *testing.T) {
-	commandruntest.RunTransportContract(t, func(tb testing.TB) coreadmin.CommandRunTransport {
+	commandruntest.RunTransportContract(t, func(tb testing.TB) admin.CommandRunTransport {
 		transport, _ := newMemoryTransport(tb, true, true)
 		return transport
 	})
@@ -34,10 +33,14 @@ func TestTransportReportsSafeHandlerAndDecodeFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
-	defer subscription.Close(context.Background())
+	defer func() {
+		if closeErr := subscription.Close(context.Background()); closeErr != nil {
+			t.Errorf("close subscription: %v", closeErr)
+		}
+	}()
 	awaitReady(t, subscription)
-	if err := transport.PublishCommandRun(context.Background(), validUpdate("handler-error", 1)); err != nil {
-		t.Fatalf("publish: %v", err)
+	if publishErr := transport.PublishCommandRun(context.Background(), validUpdate("handler-error", 1)); publishErr != nil {
+		t.Fatalf("publish: %v", publishErr)
 	}
 	if got := awaitError(t, subscription); !errors.Is(got, admin.ErrCommandRunHandlerFailed) || stringsContain(got.Error(), "secret") {
 		t.Fatalf("handler error = %v", got)
@@ -63,8 +66,8 @@ func TestSubscriptionCloseDoesNotCloseHostDriver(t *testing.T) {
 		t.Fatalf("subscribe: %v", err)
 	}
 	awaitReady(t, subscription)
-	if err := subscription.Close(context.Background()); err != nil {
-		t.Fatalf("close: %v", err)
+	if closeErr := subscription.Close(context.Background()); closeErr != nil {
+		t.Fatalf("close: %v", closeErr)
 	}
 	select {
 	case <-driver.Errors():
@@ -76,7 +79,9 @@ func TestSubscriptionCloseDoesNotCloseHostDriver(t *testing.T) {
 		t.Fatalf("subscribe after close: %v", err)
 	}
 	awaitReady(t, second)
-	_ = second.Close(context.Background())
+	if closeErr := second.Close(context.Background()); closeErr != nil {
+		t.Fatalf("close second subscription: %v", closeErr)
+	}
 }
 
 func TestSubscriptionContextCancellationClosesDeliveryAndCancelsHandler(t *testing.T) {
@@ -182,7 +187,11 @@ func newMemoryTransport(tb testing.TB, publisher, subscriber bool) (*Transport, 
 	if err := driver.Start(context.Background()); err != nil {
 		tb.Fatalf("start memory driver: %v", err)
 	}
-	tb.Cleanup(func() { _ = driver.Close(context.Background()) })
+	tb.Cleanup(func() {
+		if err := driver.Close(context.Background()); err != nil {
+			tb.Errorf("close memory driver: %v", err)
+		}
+	})
 	drivers, err := messaging.NewDriverRegistry(map[string]messaging.Driver{testDriverName: driver})
 	if err != nil {
 		tb.Fatalf("driver registry: %v", err)

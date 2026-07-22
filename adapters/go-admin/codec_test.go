@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	admin "github.com/goliatone/go-admin/pkg/admin"
+	admin "github.com/goliatone/go-admin/admin"
 	messaging "github.com/goliatone/go-messaging"
 )
 
@@ -36,8 +36,8 @@ func TestCodecRoundTrip(t *testing.T) {
 		decoded.CorrelationID != update.CorrelationID || decoded.Scope != update.Scope {
 		t.Fatalf("decoded update mismatch: %+v", decoded)
 	}
-	decoded.Metadata["safe"].(map[string]any)["value"] = "changed"
-	if update.Metadata["safe"].(map[string]any)["value"] != "original" {
+	requireMetadataMap(t, decoded.Metadata, "safe")["value"] = "changed"
+	if requireMetadataMap(t, update.Metadata, "safe")["value"] != "original" {
 		t.Fatal("codec retained caller-owned metadata")
 	}
 }
@@ -96,7 +96,11 @@ func TestCodecRejectsStrictBoundaryViolations(t *testing.T) {
 				t.Fatalf("unmarshal fixture: %v", err)
 			}
 			payload["unexpected"] = true
-			envelope.Payload, _ = json.Marshal(payload)
+			encoded, marshalErr := json.Marshal(payload)
+			if marshalErr != nil {
+				t.Fatalf("marshal fixture: %v", marshalErr)
+			}
+			envelope.Payload = encoded
 			return envelope
 		},
 	}
@@ -123,11 +127,14 @@ func TestCodecRejectsPayloadIdentityMismatch(t *testing.T) {
 		t.Fatalf("encode: %v", err)
 	}
 	var payload admin.CommandRunUpdate
-	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+	if unmarshalErr := json.Unmarshal(envelope.Payload, &payload); unmarshalErr != nil {
+		t.Fatalf("unmarshal: %v", unmarshalErr)
 	}
 	payload.Scope.EnvironmentID = "production"
-	envelope.Payload, _ = json.Marshal(payload)
+	envelope.Payload, err = json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
 	envelope.Headers[HeaderEnvironmentID] = "production"
 	if _, err := codec.Decode(envelope); !errors.Is(err, ErrIdentityMismatch) {
 		t.Fatalf("decode error = %v, want identity mismatch", err)
@@ -141,6 +148,15 @@ func requireCodec(t testing.TB) *Codec {
 		t.Fatalf("new codec: %v", err)
 	}
 	return codec
+}
+
+func requireMetadataMap(t testing.TB, metadata map[string]any, key string) map[string]any {
+	t.Helper()
+	value, ok := metadata[key].(map[string]any)
+	if !ok {
+		t.Fatalf("metadata %q is not an object", key)
+	}
+	return value
 }
 
 func validUpdate(runID string, revision uint64) admin.CommandRunUpdate {

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	admin "github.com/goliatone/go-admin/pkg/admin"
+	admin "github.com/goliatone/go-admin/admin"
 	goadmin "github.com/goliatone/go-messaging/adapters/go-admin"
 )
 
@@ -39,7 +39,11 @@ func TestRoleSpecificAssemblyAndBoundedUnavailablePublish(t *testing.T) {
 			if err != nil {
 				t.Fatalf("new: %v", err)
 			}
-			defer components.CloseDriver(context.Background())
+			defer func() {
+				if closeErr := components.CloseDriver(context.Background()); closeErr != nil {
+					t.Errorf("close driver: %v", closeErr)
+				}
+			}()
 			if components.Channel != "test.app.go-admin.command-runs" || components.Transport == nil {
 				t.Fatalf("unexpected components: %+v", components)
 			}

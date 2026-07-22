@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	admin "github.com/goliatone/go-admin/pkg/admin"
+	admin "github.com/goliatone/go-admin/admin"
 	goadmin "github.com/goliatone/go-messaging/adapters/go-admin"
 )
 
@@ -43,7 +43,27 @@ func TestDockerValkeyWorkerGatewayFanoutAndRecovery(t *testing.T) {
 	})
 	secondSub := subscribeIntegration(t, secondGateway, channelUpdateHandler(secondReceived))
 	hybridSub := subscribeIntegration(t, hybrid, channelUpdateHandler(hybridReceived))
+	exerciseFanout(t, worker, hybrid, firstReceived, secondReceived, hybridReceived)
+	exerciseBrokerRecovery(
+		t, broker, worker, firstReceived, secondReceived, hybridReceived,
+		firstSub, secondSub, hybridSub,
+	)
 
+	closeIntegrationSubscription(t, firstSub)
+	closeIntegrationSubscription(t, secondSub)
+	closeIntegrationSubscription(t, hybridSub)
+	closeIntegrationComponents(t, worker, firstGateway, secondGateway, hybrid)
+}
+
+func exerciseFanout(
+	t *testing.T,
+	worker *Components,
+	hybrid *Components,
+	firstReceived <-chan projectedDelivery,
+	secondReceived <-chan admin.CommandRunUpdate,
+	hybridReceived <-chan admin.CommandRunUpdate,
+) {
+	t.Helper()
 	initial := validAssemblyUpdate("worker-fanout", 1)
 	if err := worker.Transport.PublishCommandRun(context.Background(), initial); err != nil {
 		t.Fatalf("worker publish: %v", err)
@@ -74,9 +94,20 @@ func TestDockerValkeyWorkerGatewayFanoutAndRecovery(t *testing.T) {
 	_ = awaitProjected(t, firstReceived)
 	_ = awaitIntegrationUpdate(t, secondReceived)
 	_ = awaitIntegrationUpdate(t, hybridReceived)
+}
 
+func exerciseBrokerRecovery(
+	t *testing.T,
+	broker *dockerValkey,
+	worker *Components,
+	firstReceived <-chan projectedDelivery,
+	secondReceived <-chan admin.CommandRunUpdate,
+	hybridReceived <-chan admin.CommandRunUpdate,
+	subscriptions ...admin.CommandRunSubscription,
+) {
+	t.Helper()
 	broker.stop(t)
-	awaitAnySubscriptionFailure(t, firstSub, secondSub, hybridSub)
+	awaitAnySubscriptionFailure(t, subscriptions...)
 	lossStarted := time.Now()
 	lossCtx, lossCancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
 	lossErr := worker.Transport.PublishCommandRun(lossCtx, validAssemblyUpdate("broker-loss", 1))
@@ -105,11 +136,6 @@ func TestDockerValkeyWorkerGatewayFanoutAndRecovery(t *testing.T) {
 	if got := awaitIntegrationUpdate(t, hybridReceived); got.RunID != recovered.RunID {
 		t.Fatalf("hybrid gateway recovery run = %q", got.RunID)
 	}
-
-	closeIntegrationSubscription(t, firstSub)
-	closeIntegrationSubscription(t, secondSub)
-	closeIntegrationSubscription(t, hybridSub)
-	closeIntegrationComponents(t, worker, firstGateway, secondGateway, hybrid)
 }
 
 type projectedDelivery struct {
@@ -126,12 +152,22 @@ type dockerValkey struct {
 
 func startDockerValkey(t *testing.T) *dockerValkey {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listenConfig := net.ListenConfig{}
+	listener, err := listenConfig.Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("reserve port: %v", err)
 	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	_ = listener.Close()
+	tcpAddress, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		if closeErr := listener.Close(); closeErr != nil {
+			t.Errorf("close port reservation: %v", closeErr)
+		}
+		t.Fatalf("reserved address has type %T, want *net.TCPAddr", listener.Addr())
+	}
+	port := tcpAddress.Port
+	if closeErr := listener.Close(); closeErr != nil {
+		t.Fatalf("close port reservation: %v", closeErr)
+	}
 	broker := &dockerValkey{
 		name:    fmt.Sprintf("go-admin-valkey-%d-%d", os.Getpid(), time.Now().UnixNano()),
 		address: fmt.Sprintf("127.0.0.1:%d", port),
@@ -147,7 +183,9 @@ func startDockerValkey(t *testing.T) *dockerValkey {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = exec.CommandContext(ctx, "docker", "rm", "-f", broker.name).Run()
+		if cleanupErr := exec.CommandContext(ctx, "docker", "rm", "-f", broker.name).Run(); cleanupErr != nil {
+			t.Errorf("remove docker Valkey: %v", cleanupErr)
+		}
 	})
 	waitForTCP(t, broker.address, 15*time.Second)
 	return broker
@@ -211,7 +249,9 @@ func startIntegrationComponents(t *testing.T, address string, role admin.Command
 	t.Cleanup(func() {
 		closeCtx, closeCancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer closeCancel()
-		_ = components.CloseDriver(closeCtx)
+		if closeErr := components.CloseDriver(closeCtx); closeErr != nil {
+			t.Errorf("close %s driver: %v", role, closeErr)
+		}
 	})
 	return components
 }
@@ -232,7 +272,9 @@ func subscribeIntegration(t *testing.T, components *Components, handler admin.Co
 	t.Cleanup(func() {
 		closeCtx, closeCancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer closeCancel()
-		_ = subscription.Close(closeCtx)
+		if closeErr := subscription.Close(closeCtx); closeErr != nil {
+			t.Errorf("close subscription: %v", closeErr)
+		}
 	})
 	return subscription
 }
@@ -326,9 +368,13 @@ func waitForTCP(t *testing.T, address string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		connection, err := net.DialTimeout("tcp", address, 100*time.Millisecond)
+		dialCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		connection, err := (&net.Dialer{}).DialContext(dialCtx, "tcp", address)
+		cancel()
 		if err == nil {
-			_ = connection.Close()
+			if closeErr := connection.Close(); closeErr != nil {
+				t.Errorf("close readiness connection: %v", closeErr)
+			}
 			return
 		}
 		time.Sleep(50 * time.Millisecond)

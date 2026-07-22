@@ -3,7 +3,7 @@ package valkey_test
 import (
 	"fmt"
 
-	admin "github.com/goliatone/go-admin/pkg/admin"
+	admin "github.com/goliatone/go-admin/admin"
 	commandvalkey "github.com/goliatone/go-messaging/adapters/go-admin/valkey"
 )
 
