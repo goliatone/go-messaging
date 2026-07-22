@@ -28,7 +28,7 @@ type FailureDTO struct {
 
 type ReplyDTO struct {
 	Version         string                  `json:"version"`
-	Receipt         command.DispatchReceipt `json:"receipt,omitempty"`
+	Receipt         command.DispatchReceipt `json:"receipt"`
 	ResultPresent   bool                    `json:"result_present"`
 	Result          json.RawMessage         `json:"result,omitempty"`
 	ResultType      string                  `json:"result_type,omitempty"`

@@ -38,7 +38,7 @@ type CatalogDispatchDTO struct {
 	HandlerKind   string            `json:"handler_kind,omitempty"`
 	Payload       map[string]any    `json:"payload"`
 	IDs           []string          `json:"ids,omitempty"`
-	Options       CatalogOptionsDTO `json:"options,omitempty"`
+	Options       CatalogOptionsDTO `json:"options"`
 }
 
 // UnmarshalJSON preserves JSON numbers as json.Number. The catalog DTO uses a

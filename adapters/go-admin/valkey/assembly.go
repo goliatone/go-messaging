@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	admin "github.com/goliatone/go-admin/pkg/admin"
+	admin "github.com/goliatone/go-admin/admin"
 	messaging "github.com/goliatone/go-messaging"
 	goadmin "github.com/goliatone/go-messaging/adapters/go-admin"
 	"github.com/goliatone/go-messaging/transport/valkey/pubsub"
@@ -71,6 +71,37 @@ func New(config Config) (*Components, error) {
 		return nil, err
 	}
 
+	driverConfig := makeDriverConfig(config)
+	driver, err := pubsub.New(driverConfig)
+	if err != nil {
+		return nil, fmt.Errorf("%w: Valkey driver configuration", goadmin.ErrInvalidConfig)
+	}
+	drivers, err := messaging.NewDriverRegistry(map[string]messaging.Driver{"valkey-pubsub": driver})
+	if err != nil {
+		return nil, fmt.Errorf("%w: driver registry", goadmin.ErrInvalidConfig)
+	}
+	codec, err := goadmin.NewCodec(goadmin.CodecConfig{
+		ApplicationID: config.ApplicationID, EnvironmentID: config.EnvironmentID,
+		MaxPayloadBytes: config.MaxPayloadBytes, ContractLimits: config.ContractLimits,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	transportConfig, router, err := makeTransportConfig(config, drivers, codec, channel)
+	if err != nil {
+		return nil, err
+	}
+	transport, err := goadmin.NewTransport(transportConfig)
+	if err != nil {
+		return nil, err
+	}
+	return &Components{
+		Driver: driver, Router: router, Transport: transport, Channel: channel, Route: LogicalRoute,
+	}, nil
+}
+
+func makeDriverConfig(config Config) pubsub.Config {
 	driverConfig := pubsub.DefaultConfig(config.Addresses...)
 	driverConfig.Valkey.Username = config.Username
 	driverConfig.Valkey.Password = config.Password
@@ -97,22 +128,15 @@ func New(config Config) (*Components, error) {
 	if config.QueueSize > 0 {
 		driverConfig.QueueSize = config.QueueSize
 	}
-	driver, err := pubsub.New(driverConfig)
-	if err != nil {
-		return nil, fmt.Errorf("%w: Valkey driver configuration", goadmin.ErrInvalidConfig)
-	}
-	drivers, err := messaging.NewDriverRegistry(map[string]messaging.Driver{"valkey-pubsub": driver})
-	if err != nil {
-		return nil, fmt.Errorf("%w: driver registry", goadmin.ErrInvalidConfig)
-	}
-	codec, err := goadmin.NewCodec(goadmin.CodecConfig{
-		ApplicationID: config.ApplicationID, EnvironmentID: config.EnvironmentID,
-		MaxPayloadBytes: config.MaxPayloadBytes, ContractLimits: config.ContractLimits,
-	})
-	if err != nil {
-		return nil, err
-	}
+	return driverConfig
+}
 
+func makeTransportConfig(
+	config Config,
+	drivers *messaging.DriverRegistry,
+	codec *goadmin.Codec,
+	channel string,
+) (goadmin.TransportConfig, *messaging.Router, error) {
 	transportConfig := goadmin.TransportConfig{
 		Name: config.TransportName, Drivers: drivers, Codec: codec, ErrorBuffer: config.ErrorBuffer,
 	}
@@ -122,6 +146,7 @@ func New(config Config) (*Components, error) {
 		if publishTimeout <= 0 {
 			publishTimeout = defaultPublishTimeout
 		}
+		var err error
 		router, err = messaging.NewRouter(drivers, []messaging.Route{{
 			Name: LogicalRoute, Strategy: messaging.StrategyPrimary,
 			Bindings: []messaging.RouteBinding{{
@@ -131,7 +156,7 @@ func New(config Config) (*Components, error) {
 			Timeout: publishTimeout, MaxMessageBytes: config.MaxPayloadBytes,
 		}}, nil)
 		if err != nil {
-			return nil, fmt.Errorf("%w: publisher route", goadmin.ErrInvalidConfig)
+			return goadmin.TransportConfig{}, nil, fmt.Errorf("%w: publisher route", goadmin.ErrInvalidConfig)
 		}
 		transportConfig.Router = router
 		transportConfig.PublishRoute = LogicalRoute
@@ -142,13 +167,7 @@ func New(config Config) (*Components, error) {
 			Source: messaging.Source{Name: channel},
 		}}
 	}
-	transport, err := goadmin.NewTransport(transportConfig)
-	if err != nil {
-		return nil, err
-	}
-	return &Components{
-		Driver: driver, Router: router, Transport: transport, Channel: channel, Route: LogicalRoute,
-	}, nil
+	return transportConfig, router, nil
 }
 
 // ChannelName returns the application/environment Pub/Sub fanout channel.

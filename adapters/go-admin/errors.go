@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	admin "github.com/goliatone/go-admin/pkg/admin"
+	admin "github.com/goliatone/go-admin/admin"
 )
 
 var (

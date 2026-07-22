@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	admin "github.com/goliatone/go-admin/pkg/admin"
+	admin "github.com/goliatone/go-admin/admin"
 	messaging "github.com/goliatone/go-messaging"
 )
 
@@ -79,8 +79,8 @@ func (c *Codec) Encode(update admin.CommandRunUpdate) (messaging.Envelope, error
 	if err != nil {
 		return messaging.Envelope{}, fmt.Errorf("%w: command-run contract", ErrEnvelopeRejected)
 	}
-	if err := c.validateIdentity(normalized.Scope); err != nil {
-		return messaging.Envelope{}, err
+	if identityErr := c.validateIdentity(normalized.Scope); identityErr != nil {
+		return messaging.Envelope{}, identityErr
 	}
 	payload, err := json.Marshal(normalized)
 	if err != nil {
@@ -112,26 +112,13 @@ func (c *Codec) Decode(envelope messaging.Envelope) (admin.CommandRunUpdate, err
 	if c == nil {
 		return admin.CommandRunUpdate{}, ErrInvalidConfig
 	}
-	if err := envelope.ValidateWith(c.validation); err != nil {
-		return admin.CommandRunUpdate{}, fmt.Errorf("%w: envelope contract", ErrEnvelopeRejected)
-	}
-	if envelope.Kind != messaging.KindEvent || envelope.Type != MessageType ||
-		envelope.SchemaVersion != EnvelopeSchemaVersion || envelope.ContentType != ContentTypeJSON {
-		return admin.CommandRunUpdate{}, fmt.Errorf("%w: unsupported envelope metadata", ErrEnvelopeRejected)
+	if err := c.validateEnvelope(envelope); err != nil {
+		return admin.CommandRunUpdate{}, err
 	}
 
-	decoder := json.NewDecoder(bytes.NewReader(envelope.Payload))
-	decoder.DisallowUnknownFields()
-	var update admin.CommandRunUpdate
-	if err := decoder.Decode(&update); err != nil {
-		return admin.CommandRunUpdate{}, fmt.Errorf("%w: invalid command-run JSON", ErrEnvelopeRejected)
-	}
-	if err := requireJSONEOF(decoder); err != nil {
-		return admin.CommandRunUpdate{}, fmt.Errorf("%w: invalid command-run JSON", ErrEnvelopeRejected)
-	}
-	normalized, err := admin.NormalizeCommandRunUpdate(update, c.contractLimits)
+	normalized, err := c.decodeUpdate(envelope.Payload)
 	if err != nil {
-		return admin.CommandRunUpdate{}, fmt.Errorf("%w: command-run contract", ErrEnvelopeRejected)
+		return admin.CommandRunUpdate{}, err
 	}
 	if err := c.validateIdentity(normalized.Scope); err != nil {
 		return admin.CommandRunUpdate{}, err
@@ -144,6 +131,34 @@ func (c *Codec) Decode(envelope messaging.Envelope) (admin.CommandRunUpdate, err
 		return admin.CommandRunUpdate{}, fmt.Errorf("%w: envelope lineage", ErrEnvelopeRejected)
 	}
 	return normalized.Clone(), nil
+}
+
+func (c *Codec) validateEnvelope(envelope messaging.Envelope) error {
+	if err := envelope.ValidateWith(c.validation); err != nil {
+		return fmt.Errorf("%w: envelope contract", ErrEnvelopeRejected)
+	}
+	if envelope.Kind != messaging.KindEvent || envelope.Type != MessageType ||
+		envelope.SchemaVersion != EnvelopeSchemaVersion || envelope.ContentType != ContentTypeJSON {
+		return fmt.Errorf("%w: unsupported envelope metadata", ErrEnvelopeRejected)
+	}
+	return nil
+}
+
+func (c *Codec) decodeUpdate(payload []byte) (admin.CommandRunUpdate, error) {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	var update admin.CommandRunUpdate
+	if err := decoder.Decode(&update); err != nil {
+		return admin.CommandRunUpdate{}, fmt.Errorf("%w: invalid command-run JSON", ErrEnvelopeRejected)
+	}
+	if err := requireJSONEOF(decoder); err != nil {
+		return admin.CommandRunUpdate{}, fmt.Errorf("%w: invalid command-run JSON", ErrEnvelopeRejected)
+	}
+	normalized, err := admin.NormalizeCommandRunUpdate(update, c.contractLimits)
+	if err != nil {
+		return admin.CommandRunUpdate{}, fmt.Errorf("%w: command-run contract", ErrEnvelopeRejected)
+	}
+	return normalized, nil
 }
 
 func (c *Codec) validateIdentity(scope admin.CommandRunScope) error {

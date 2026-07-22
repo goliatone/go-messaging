@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	admin "github.com/goliatone/go-admin/pkg/admin"
+	admin "github.com/goliatone/go-admin/admin"
 	messaging "github.com/goliatone/go-messaging"
 )
 
@@ -51,54 +51,86 @@ type Transport struct {
 
 // NewTransport validates adapter wiring without starting or taking ownership of drivers.
 func NewTransport(config TransportConfig) (*Transport, error) {
+	config, publishEnabled, err := normalizeTransportConfig(config)
+	if err != nil {
+		return nil, err
+	}
+
+	usedDrivers := make(map[string]messaging.Driver)
+	if collectErr := collectPublishDrivers(config, publishEnabled, usedDrivers); collectErr != nil {
+		return nil, collectErr
+	}
+	sources, err := normalizeSourceBindings(config.Sources, config.Drivers, usedDrivers)
+	if err != nil {
+		return nil, err
+	}
+	capabilities := mapCapabilities(config.Name, usedDrivers)
+	if err := capabilities.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: transport capabilities", ErrInvalidConfig)
+	}
+	return &Transport{
+		name: config.Name, router: config.Router, drivers: config.Drivers,
+		publishRoute: config.PublishRoute, sources: sources, codec: config.Codec,
+		errorBuffer: config.ErrorBuffer, capabilities: capabilities,
+	}, nil
+}
+
+func normalizeTransportConfig(config TransportConfig) (TransportConfig, bool, error) {
 	config.Name = strings.TrimSpace(config.Name)
 	if config.Name == "" {
 		config.Name = defaultTransportName
 	}
 	config.PublishRoute = strings.TrimSpace(config.PublishRoute)
 	if config.Codec == nil {
-		return nil, fmt.Errorf("%w: codec is required", ErrInvalidConfig)
+		return TransportConfig{}, false, fmt.Errorf("%w: codec is required", ErrInvalidConfig)
 	}
 	publishEnabled := config.Router != nil || config.PublishRoute != ""
 	if publishEnabled && (config.Router == nil || config.PublishRoute == "") {
-		return nil, fmt.Errorf("%w: router and publish route must be configured together", ErrInvalidConfig)
+		return TransportConfig{}, false, fmt.Errorf("%w: router and publish route must be configured together", ErrInvalidConfig)
 	}
 	subscribeEnabled := len(config.Sources) > 0
 	if subscribeEnabled && config.Drivers == nil {
-		return nil, fmt.Errorf("%w: driver registry is required for ingress", ErrInvalidConfig)
+		return TransportConfig{}, false, fmt.Errorf("%w: driver registry is required for ingress", ErrInvalidConfig)
 	}
 	if !publishEnabled && !subscribeEnabled {
-		return nil, fmt.Errorf("%w: publisher or subscriber wiring is required", ErrInvalidConfig)
+		return TransportConfig{}, false, fmt.Errorf("%w: publisher or subscriber wiring is required", ErrInvalidConfig)
 	}
 	if config.Drivers == nil {
-		return nil, fmt.Errorf("%w: driver registry is required", ErrInvalidConfig)
+		return TransportConfig{}, false, fmt.Errorf("%w: driver registry is required", ErrInvalidConfig)
 	}
 	if config.ErrorBuffer <= 0 {
 		config.ErrorBuffer = 16
 	}
+	return config, publishEnabled, nil
+}
 
-	usedDrivers := make(map[string]messaging.Driver)
-	if publishEnabled {
-		route, ok := config.Router.Route(config.PublishRoute)
-		if !ok {
-			return nil, fmt.Errorf("%w: publish route is unavailable", ErrInvalidConfig)
-		}
-		if !routeAllowsCommandRuns(route) {
-			return nil, fmt.Errorf("%w: publish route rejects command-run events", ErrInvalidConfig)
-		}
-		if config.Drivers != nil {
-			for _, binding := range route.Bindings {
-				driver, ok := config.Drivers.Lookup(binding.Driver)
-				if !ok {
-					return nil, fmt.Errorf("%w: publish driver is unavailable", ErrInvalidConfig)
-				}
-				usedDrivers[binding.Driver] = driver
-			}
-		}
+func collectPublishDrivers(config TransportConfig, enabled bool, usedDrivers map[string]messaging.Driver) error {
+	if !enabled {
+		return nil
 	}
+	route, ok := config.Router.Route(config.PublishRoute)
+	if !ok {
+		return fmt.Errorf("%w: publish route is unavailable", ErrInvalidConfig)
+	}
+	if !routeAllowsCommandRuns(route) {
+		return fmt.Errorf("%w: publish route rejects command-run events", ErrInvalidConfig)
+	}
+	for _, binding := range route.Bindings {
+		driver, found := config.Drivers.Lookup(binding.Driver)
+		if !found {
+			return fmt.Errorf("%w: publish driver is unavailable", ErrInvalidConfig)
+		}
+		usedDrivers[binding.Driver] = driver
+	}
+	return nil
+}
 
-	sources := make([]SourceBinding, len(config.Sources))
-	copy(sources, config.Sources)
+func normalizeSourceBindings(
+	configured []SourceBinding,
+	drivers *messaging.DriverRegistry,
+	usedDrivers map[string]messaging.Driver,
+) ([]SourceBinding, error) {
+	sources := append([]SourceBinding(nil), configured...)
 	seenSources := make(map[string]struct{}, len(sources))
 	for index := range sources {
 		source := &sources[index]
@@ -113,7 +145,7 @@ func NewTransport(config TransportConfig) (*Transport, error) {
 			return nil, fmt.Errorf("%w: duplicate source binding", ErrInvalidConfig)
 		}
 		seenSources[source.Name] = struct{}{}
-		driver, err := config.Drivers.Require(source.Driver)
+		driver, err := drivers.Require(source.Driver)
 		if err != nil {
 			return nil, fmt.Errorf("%w: source driver is unavailable", ErrInvalidConfig)
 		}
@@ -122,16 +154,7 @@ func NewTransport(config TransportConfig) (*Transport, error) {
 		}
 		usedDrivers[source.Driver] = driver
 	}
-
-	capabilities := mapCapabilities(config.Name, usedDrivers)
-	if err := capabilities.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: transport capabilities", ErrInvalidConfig)
-	}
-	return &Transport{
-		name: config.Name, router: config.Router, drivers: config.Drivers,
-		publishRoute: config.PublishRoute, sources: sources, codec: config.Codec,
-		errorBuffer: config.ErrorBuffer, capabilities: capabilities,
-	}, nil
+	return sources, nil
 }
 
 // Capabilities reports only provider-neutral semantics.
@@ -172,21 +195,9 @@ func (t *Transport) SubscribeCommandRuns(
 	selector admin.CommandRunSelector,
 	handler admin.CommandRunHandler,
 ) (admin.CommandRunSubscription, error) {
-	if t == nil || t.drivers == nil || len(t.sources) == 0 {
-		return nil, ErrSubscriberDisabled
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if err := ctx.Err(); err != nil {
+	ctx, selector, err := t.validateSubscriptionRequest(ctx, selector, handler)
+	if err != nil {
 		return nil, err
-	}
-	selector = selector.Normalize()
-	if err := selector.Validate(); err != nil {
-		return nil, err
-	}
-	if handler == nil {
-		return nil, fmt.Errorf("%w: handler is required", ErrInvalidConfig)
 	}
 
 	subscriptionCtx, cancel := context.WithCancel(ctx)
@@ -197,7 +208,56 @@ func (t *Transport) SubscribeCommandRuns(
 		default:
 		}
 	}
-	messageHandler := func(deliveryCtx context.Context, delivery messaging.Delivery) messaging.HandleResult {
+	messageHandler := t.makeMessageHandler(subscriptionCtx, selector, handler, report)
+	bindings := t.makeIngressBindings(messageHandler)
+	ingress, err := messaging.NewIngress(t.drivers, bindings)
+	if err != nil {
+		cancel()
+		return nil, ErrSubscriptionFailed
+	}
+	subscriptions, err := ingress.Subscribe(subscriptionCtx)
+	if err != nil {
+		cancel()
+		return nil, ErrSubscriptionFailed
+	}
+	if len(subscriptions) == 0 {
+		cancel()
+		return nil, ErrSubscriptionFailed
+	}
+	return newCompositeSubscription(subscriptionCtx, cancel, subscriptions, handlerErrors, t.errorBuffer), nil
+}
+
+func (t *Transport) validateSubscriptionRequest(
+	ctx context.Context,
+	selector admin.CommandRunSelector,
+	handler admin.CommandRunHandler,
+) (context.Context, admin.CommandRunSelector, error) {
+	if t == nil || t.drivers == nil || len(t.sources) == 0 {
+		return nil, admin.CommandRunSelector{}, ErrSubscriberDisabled
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, admin.CommandRunSelector{}, err
+	}
+	selector = selector.Normalize()
+	if err := selector.Validate(); err != nil {
+		return nil, admin.CommandRunSelector{}, err
+	}
+	if handler == nil {
+		return nil, admin.CommandRunSelector{}, fmt.Errorf("%w: handler is required", ErrInvalidConfig)
+	}
+	return ctx, selector, nil
+}
+
+func (t *Transport) makeMessageHandler(
+	subscriptionCtx context.Context,
+	selector admin.CommandRunSelector,
+	handler admin.CommandRunHandler,
+	report func(error),
+) messaging.Handler {
+	return func(deliveryCtx context.Context, delivery messaging.Delivery) messaging.HandleResult {
 		if delivery == nil {
 			report(ErrEnvelopeRejected)
 			return messaging.Reject(ErrEnvelopeRejected)
@@ -223,7 +283,9 @@ func (t *Transport) SubscribeCommandRuns(
 		}
 		return messaging.Complete()
 	}
+}
 
+func (t *Transport) makeIngressBindings(messageHandler messaging.Handler) []messaging.IngressBinding {
 	bindings := make([]messaging.IngressBinding, 0, len(t.sources))
 	for _, source := range t.sources {
 		bindings = append(bindings, messaging.IngressBinding{
@@ -237,21 +299,7 @@ func (t *Transport) SubscribeCommandRuns(
 			RequiredDispositions: []messaging.Disposition{messaging.DispositionComplete, messaging.DispositionReject},
 		})
 	}
-	ingress, err := messaging.NewIngress(t.drivers, bindings)
-	if err != nil {
-		cancel()
-		return nil, ErrSubscriptionFailed
-	}
-	subscriptions, err := ingress.Subscribe(subscriptionCtx)
-	if err != nil {
-		cancel()
-		return nil, ErrSubscriptionFailed
-	}
-	if len(subscriptions) == 0 {
-		cancel()
-		return nil, ErrSubscriptionFailed
-	}
-	return newCompositeSubscription(subscriptionCtx, cancel, subscriptions, handlerErrors, t.errorBuffer), nil
+	return bindings
 }
 
 func routeAllowsCommandRuns(route messaging.Route) bool {
@@ -323,9 +371,11 @@ func newCompositeSubscription(
 	go s.monitor(ctx, handlerErrors)
 	go func() {
 		<-ctx.Done()
-		closeCtx, closeCancel := context.WithTimeout(context.Background(), automaticCloseTimeout)
+		closeCtx, closeCancel := context.WithTimeout(context.WithoutCancel(ctx), automaticCloseTimeout)
 		defer closeCancel()
-		_ = s.Close(closeCtx)
+		if err := s.Close(closeCtx); err != nil {
+			return
+		}
 	}()
 	return s
 }
@@ -372,43 +422,21 @@ func (s *compositeSubscription) monitor(ctx context.Context, handlerErrors <-cha
 
 	readySignals := make(chan struct{}, len(s.subscriptions))
 	subscriptionErrors := make(chan error, len(s.subscriptions))
+	monitorsDone := s.startSubscriptionMonitors(ctx, readySignals, subscriptionErrors)
+	s.forwardMonitorEvents(ctx, monitorsDone, readySignals, handlerErrors, subscriptionErrors)
+}
+
+func (s *compositeSubscription) startSubscriptionMonitors(
+	ctx context.Context,
+	readySignals chan<- struct{},
+	subscriptionErrors chan<- error,
+) <-chan struct{} {
 	var monitors sync.WaitGroup
 	for _, subscription := range s.subscriptions {
 		monitors.Add(1)
 		go func(sub messaging.Subscription) {
 			defer monitors.Done()
-			ready := sub.Ready()
-			errorsCh := sub.Errors()
-			for ready != nil || errorsCh != nil {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ready:
-					readySignals <- struct{}{}
-					ready = nil
-				case err, ok := <-errorsCh:
-					if !ok {
-						if ready != nil {
-							select {
-							case subscriptionErrors <- ErrSubscriptionFailed:
-							case <-ctx.Done():
-							}
-						}
-						errorsCh = nil
-						continue
-					}
-					if err != nil {
-						classified := classifySubscriptionError(err)
-						if classified == nil {
-							continue
-						}
-						select {
-						case subscriptionErrors <- classified:
-						case <-ctx.Done():
-						}
-					}
-				}
-			}
+			s.monitorSubscription(ctx, sub, readySignals, subscriptionErrors)
 		}(subscription)
 	}
 
@@ -417,6 +445,54 @@ func (s *compositeSubscription) monitor(ctx context.Context, handlerErrors <-cha
 		monitors.Wait()
 		close(monitorsDone)
 	}()
+	return monitorsDone
+}
+
+func (s *compositeSubscription) monitorSubscription(
+	ctx context.Context,
+	subscription messaging.Subscription,
+	readySignals chan<- struct{},
+	subscriptionErrors chan<- error,
+) {
+	ready := subscription.Ready()
+	errorsCh := subscription.Errors()
+	for ready != nil || errorsCh != nil {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ready:
+			readySignals <- struct{}{}
+			ready = nil
+		case err, ok := <-errorsCh:
+			if !ok {
+				if ready != nil {
+					sendMonitorError(ctx, subscriptionErrors, ErrSubscriptionFailed)
+				}
+				errorsCh = nil
+				continue
+			}
+			sendMonitorError(ctx, subscriptionErrors, classifySubscriptionError(err))
+		}
+	}
+}
+
+func sendMonitorError(ctx context.Context, target chan<- error, err error) {
+	if err == nil {
+		return
+	}
+	select {
+	case target <- err:
+	case <-ctx.Done():
+	}
+}
+
+func (s *compositeSubscription) forwardMonitorEvents(
+	ctx context.Context,
+	monitorsDone <-chan struct{},
+	readySignals <-chan struct{},
+	handlerErrors <-chan error,
+	subscriptionErrors <-chan error,
+) {
 	readyCount := 0
 	readyClosed := false
 	for {
