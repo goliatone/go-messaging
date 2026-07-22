@@ -1,6 +1,24 @@
 # Changelog
 
+# [0.2.0](https://github.com/goliatone/go-messaging/compare/v0.1.0...v0.2.0) - (2026-07-22)
+
+## <!-- 1 -->🐛 Bug Fixes
+
+- Preserve structured log handler ([9d0e79e](https://github.com/goliatone/go-messaging/commit/9d0e79edb6ae33dd5caf52950f2fbfeaa8b3f650))  - (goliatone)
+
+## <!-- 16 -->➕ Add
+
+- Health handler to valkey transport ([d4eaf62](https://github.com/goliatone/go-messaging/commit/d4eaf62aa4a7e0630127a593c7227f806d9f1838))  - (goliatone)
+- Go-admin adapter ([65342d4](https://github.com/goliatone/go-messaging/commit/65342d4eaf11cca19eaec16c8e4b98dacdec975a))  - (goliatone)
+
+## <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update deps ([9955157](https://github.com/goliatone/go-messaging/commit/995515758e35b147ef077aed037c1d68ab35343f))  - (goliatone)
+
 # [0.1.0](https://github.com/goliatone/go-messaging/tree/v0.1.0) - (2026-07-18)
+
+
+New minor release: v0.1.0
 
 ## <!-- 0 -->🚀 Features
 
@@ -13,6 +31,10 @@
 - Error handling ([c8a3774](https://github.com/goliatone/go-messaging/commit/c8a3774f1661cacdab49d5f378dfaa80c4e67626))  - (goliatone)
 - Streams, post dispatch handler, cancelation ([a835888](https://github.com/goliatone/go-messaging/commit/a8358882661cd00f7938492bd77ee12bf7b982b1))  - (goliatone)
 - Remove local replaces from release modules ([1d7c2ff](https://github.com/goliatone/go-messaging/commit/1d7c2ff4d00985ada5aec42b602125dd0d63acd4))  - (goliatone)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.1.0 ([3688602](https://github.com/goliatone/go-messaging/commit/368860243b705083208a2e9b8b77214158e0db7f))  - (goliatone)
 
 ## <!-- 16 -->➕ Add
 

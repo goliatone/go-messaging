@@ -10,5 +10,5 @@ require (
 require (
 	github.com/alecthomas/kong v1.11.0 // indirect
 	github.com/go-ozzo/ozzo-validation/v4 v4.3.0 // indirect
-	github.com/goliatone/go-messaging v0.1.0
+	github.com/goliatone/go-messaging v0.2.0
 )
