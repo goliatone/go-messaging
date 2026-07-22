@@ -39,7 +39,7 @@ type jsonEnvelope struct {
 	CorrelationID string            `json:"correlation_id,omitempty"`
 	CausationID   string            `json:"causation_id,omitempty"`
 	ReplyTo       string            `json:"reply_to,omitempty"`
-	Deadline      time.Time         `json:"deadline,omitempty"`
+	Deadline      time.Time         `json:"deadline"`
 	Headers       map[string]string `json:"headers,omitempty"`
 }
 
