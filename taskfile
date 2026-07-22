@@ -246,6 +246,7 @@ function _go:module_dirs {
     printf '%s\n' "."
     find . -mindepth 2 -type f -name go.mod \
         -not -path './.git/*' \
+        -not -path './.tmp/*' \
         -not -path '*/vendor/*' \
         -exec dirname {} \; \
         | sed 's#^\./##' \
