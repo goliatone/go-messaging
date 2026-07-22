@@ -32,7 +32,7 @@ func TestReleaseDryRunPlansPresentModulesWithoutMutation(t *testing.T) {
 		"removed-replacement: transport/valkey github.com/goliatone/go-messaging",
 		"root-requirement: adapters/go-command github.com/goliatone/go-messaging@v0.99.0",
 		"removed-replacement: adapters/go-command github.com/goliatone/go-messaging",
-		"preserved-requirement: adapters/go-command github.com/goliatone/go-command@v0.23.1",
+		"preserved-requirement: adapters/go-command github.com/goliatone/go-command@v0.24.1",
 		"module-tag: transport/valkey/v0.99.0",
 		"module-tag: adapters/go-command/v0.99.0",
 		"atomic-push-ref: HEAD:main",
@@ -136,25 +136,38 @@ replace github.com/goliatone/go-messaging => ../..
 	}
 }
 
-func TestChatDemoUsesPublishedRootVersionWithLocalReplacement(t *testing.T) {
+func TestChatDemoUsesPublishedModuleVersionsWithoutReplacements(t *testing.T) {
 	repository := repositoryRoot(t)
 	contents, err := os.ReadFile(filepath.Join(repository, "examples/chat-demo/go.mod"))
 	if err != nil {
 		t.Fatalf("read chat demo module: %v", err)
 	}
 	text := string(contents)
-	if strings.Contains(text, "\tgithub.com/goliatone/go-messaging v0.0.0\n") {
-		t.Fatal("chat demo uses the unresolvable root placeholder version")
+	for _, module := range []string{
+		"github.com/goliatone/go-messaging",
+		"github.com/goliatone/go-messaging/transport/valkey",
+	} {
+		version, ok := moduleRequirementVersion(text, module)
+		if !ok {
+			t.Fatalf("chat demo does not require %s", module)
+		}
+		if version == "v0.0.0" || !strings.HasPrefix(version, "v") {
+			t.Fatalf("chat demo does not pin a published %s version: %q", module, version)
+		}
 	}
-	if !strings.Contains(text, "github.com/goliatone/go-messaging v0.0.0-") {
-		t.Fatal("chat demo does not pin a published root pseudo-version")
+	if strings.Contains(text, "replace github.com/goliatone/go-messaging") {
+		t.Fatal("chat demo must exercise published dependencies when tested with GOWORK=off")
 	}
-	if !strings.Contains(text, "exclude github.com/goliatone/go-messaging v0.0.0") {
-		t.Fatal("chat demo does not exclude the transport module's unresolved root placeholder")
+}
+
+func moduleRequirementVersion(contents, module string) (string, bool) {
+	for line := range strings.SplitSeq(contents, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == module {
+			return fields[1], true
+		}
 	}
-	if !strings.Contains(text, "replace github.com/goliatone/go-messaging => ../..") {
-		t.Fatal("chat demo lost its repository-development root replacement")
-	}
+	return "", false
 }
 
 func TestReleasePreflightRejectsUntrackedManagedOutputs(t *testing.T) {

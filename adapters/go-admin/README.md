@@ -121,18 +121,26 @@ automatic subscription recovery remains active.
 
 ## Development
 
-The adapter is a separate module. The repository `go.work` composes current
-go-admin, go-messaging, adapter, and Valkey sources during coordinated
-development:
+The adapter is a separate module. The committed repository `go.work` contains
+only modules from this repository, so it remains valid in a standalone clone.
+For coordinated work with unreleased go-admin or go-command sources, create a
+temporary workspace outside all participating repositories and point `GOWORK`
+at it; never add sibling paths to a committed workspace.
+
+The independent release gate deliberately disables workspace resolution:
 
 ```sh
-go test ./adapters/go-admin/...
-go test -race ./adapters/go-admin/...
-go vet ./adapters/go-admin/...
+cd adapters/go-admin
+GOWORK=off go mod tidy -diff
+GOWORK=off go test -race ./...
+GOWORK=off go vet ./...
 
 # Real broker coverage, including two gateways and restart recovery.
-GOADMIN_VALKEY_DOCKER_TEST=1 go test ./adapters/go-admin/valkey -run DockerValkey
+GOADMIN_VALKEY_DOCKER_TEST=1 GOWORK=off go test ./valkey -run DockerValkey
 ```
 
 Release the go-admin contract version before publishing an adapter version that
-requires it; do not ship local `replace` directives.
+requires it; do not ship local `replace` directives. The current adapter source
+requires the command-run facade and `admin/commandruntest`, which are newer than
+go-admin `v0.121.2`; that version therefore cannot be the final compatibility
+floor.
