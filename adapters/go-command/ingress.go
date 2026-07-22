@@ -10,6 +10,7 @@ import (
 
 	command "github.com/goliatone/go-command"
 	"github.com/goliatone/go-command/dispatcher"
+	gerrors "github.com/goliatone/go-errors"
 	messaging "github.com/goliatone/go-messaging"
 )
 
@@ -115,9 +116,40 @@ func (i *TypedIngress) executeAs(ctx context.Context, delivery messaging.Deliver
 	defer cancel()
 	outcome, err := i.executor.ExecuteInbound(ctx, registration, message, options)
 	if err != nil {
+		err = preserveStructuredHandlerCategory(err)
 		return IngressResult{Registration: registration, Message: message}, classifyEnvelopeDeadline(envelope, err)
 	}
 	return IngressResult{Registration: registration, Message: message, Outcome: outcome}, nil
+}
+
+// preserveStructuredHandlerCategory keeps the adapter's established error
+// contract across go-errors wrapping versions. Older releases preserved the
+// inner structured category when go-command added HANDLER_EXECUTION_FAILED;
+// newer releases explicitly classify that wrapper as handler. The transported
+// text code remains the go-command boundary while the actionable inner category
+// (for example authz or validation) remains available to disposition policy.
+func preserveStructuredHandlerCategory(err error) error {
+	var outer *gerrors.Error
+	if !gerrors.As(err, &outer) || outer == nil || outer.TextCode != "HANDLER_EXECUTION_FAILED" || outer.Category != gerrors.CategoryHandler {
+		return err
+	}
+	for cause := outer.Source; cause != nil; cause = errors.Unwrap(cause) {
+		inner, ok := cause.(*gerrors.Error) //nolint:errorlint // Walk each structured boundary in order.
+		if !ok || inner == nil {
+			continue
+		}
+		switch inner.TextCode {
+		case "HANDLER_EXECUTION_FAILED", "HANDLER_MAX_RETRIES_EXCEEDED":
+			continue
+		}
+		if inner.Category == gerrors.CategoryHandler {
+			return err
+		}
+		normalized := outer.Clone()
+		normalized.Category = inner.Category
+		return normalized
+	}
+	return err
 }
 
 func contextWithEnvelopeDeadline(ctx context.Context, envelope messaging.Envelope) (context.Context, context.CancelFunc, error) {
