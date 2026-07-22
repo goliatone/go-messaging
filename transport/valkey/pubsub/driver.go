@@ -24,13 +24,15 @@ func DefaultConfig(addresses ...string) Config {
 }
 
 type Driver struct {
-	mu     sync.Mutex
-	config Config
-	client valkey.Client
-	ready  chan struct{}
-	errors chan error
-	closed bool
-	subs   map[*subscription]struct{}
+	mu           sync.Mutex
+	config       Config
+	client       valkey.Client
+	ready        chan struct{}
+	errors       chan error
+	closed       bool
+	subs         map[*subscription]struct{}
+	healthCancel context.CancelFunc
+	healthDone   chan struct{}
 }
 
 func New(config Config) (*Driver, error) {
@@ -70,11 +72,18 @@ func (d *Driver) Start(ctx context.Context) error {
 		return err
 	}
 	d.client = client
+	healthCtx, healthCancel := context.WithCancel(context.Background())
+	d.healthCancel = healthCancel
+	d.healthDone = make(chan struct{})
+	go d.monitorHealth(healthCtx, client, d.healthDone)
 	close(d.ready)
 	return nil
 }
 
 func (d *Driver) Close(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	d.mu.Lock()
 	if d.closed {
 		d.mu.Unlock()
@@ -83,11 +92,21 @@ func (d *Driver) Close(ctx context.Context) error {
 	d.closed = true
 	client := d.client
 	d.client = nil
+	healthCancel := d.healthCancel
+	healthDone := d.healthDone
+	d.healthCancel = nil
+	d.healthDone = nil
 	subs := make([]*subscription, 0, len(d.subs))
 	for sub := range d.subs {
 		subs = append(subs, sub)
 	}
 	d.mu.Unlock()
+	if healthCancel != nil {
+		healthCancel()
+	}
+	if healthDone != nil {
+		<-healthDone
+	}
 	var joined error
 	for _, sub := range subs {
 		joined = errors.Join(joined, sub.Close(ctx))
@@ -160,6 +179,54 @@ func (d *Driver) Subscribe(ctx context.Context, source messaging.Source, handler
 
 func (d *Driver) removeSubscription(s *subscription) { d.mu.Lock(); delete(d.subs, s); d.mu.Unlock() }
 
+func (d *Driver) monitorHealth(ctx context.Context, client valkey.Client, done chan<- struct{}) {
+	defer close(done)
+	interval := max(d.config.Valkey.ReconnectMin, time.Second)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	unhealthy := false
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			err := client.Do(ctx, client.B().Ping().Build()).Error()
+			if ctx.Err() != nil {
+				return
+			}
+			if err == nil {
+				unhealthy = false
+				continue
+			}
+			if unhealthy {
+				continue
+			}
+			unhealthy = true
+			classified := shared.Classify("subscription-health", err)
+			d.report(classified)
+			d.mu.Lock()
+			subscriptions := make([]*subscription, 0, len(d.subs))
+			for subscription := range d.subs {
+				subscriptions = append(subscriptions, subscription)
+			}
+			d.mu.Unlock()
+			for _, subscription := range subscriptions {
+				subscription.report(classified)
+			}
+		}
+	}
+}
+
+func (d *Driver) report(err error) {
+	if err == nil {
+		return
+	}
+	select {
+	case d.errors <- err:
+	default:
+	}
+}
+
 type inboundMessage struct {
 	channel string
 	data    []byte
@@ -175,6 +242,8 @@ type subscription struct {
 	ready     chan struct{}
 	readyOnce sync.Once
 	errors    chan error
+	errorsMu  sync.RWMutex
+	errorsEnd bool
 	done      chan struct{}
 	inbound   chan inboundMessage
 }
@@ -198,6 +267,11 @@ func (s *subscription) report(err error) {
 	if err == nil {
 		return
 	}
+	s.errorsMu.RLock()
+	defer s.errorsMu.RUnlock()
+	if s.errorsEnd {
+		return
+	}
 	select {
 	case s.errors <- err:
 	default:
@@ -208,29 +282,50 @@ func (s *subscription) start() { go s.run() }
 func (s *subscription) run() {
 	workerDone := make(chan struct{})
 	go func() { defer close(workerDone); s.process() }()
-	receiveCtx := valkey.WithOnSubscriptionHook(s.ctx, func(event valkey.PubSubSubscription) {
-		if event.Kind == "subscribe" && event.Channel == s.source.Name {
-			s.readyOnce.Do(func() { close(s.ready) })
+	backoff := s.driver.config.Valkey.ReconnectMin
+	for s.ctx.Err() == nil {
+		receiveCtx := valkey.WithOnSubscriptionHook(s.ctx, func(event valkey.PubSubSubscription) {
+			if event.Kind == "subscribe" && event.Channel == s.source.Name {
+				s.readyOnce.Do(func() { close(s.ready) })
+			}
+		})
+		err := s.client.Receive(receiveCtx, s.client.B().Subscribe().Channel(s.source.Name).Build(), func(message valkey.PubSubMessage) {
+			if len(message.Message) > s.driver.config.Valkey.MaxMessageBytes {
+				s.report(messaging.NewMessageError(messaging.ErrMessageTooLarge))
+				return
+			}
+			item := inboundMessage{channel: message.Channel, data: []byte(message.Message)}
+			select {
+			case s.inbound <- item:
+			default:
+				s.report(messaging.NewMessageError(errors.New("valkey pubsub: intake queue full")))
+			}
+		})
+		if s.ctx.Err() != nil {
+			break
 		}
-	})
-	err := s.client.Receive(receiveCtx, s.client.B().Subscribe().Channel(s.source.Name).Build(), func(message valkey.PubSubMessage) {
-		if len(message.Message) > s.driver.config.Valkey.MaxMessageBytes {
-			s.report(messaging.NewMessageError(messaging.ErrMessageTooLarge))
-			return
+		if err != nil && !errors.Is(err, valkey.ErrClosing) {
+			s.report(shared.Classify("subscribe", err))
+		} else {
+			s.report(messaging.ErrSubscriptionClosed)
 		}
-		item := inboundMessage{channel: message.Channel, data: []byte(message.Message)}
+		timer := time.NewTimer(backoff)
 		select {
-		case s.inbound <- item:
-		default:
-			s.report(messaging.NewMessageError(errors.New("valkey pubsub: intake queue full")))
+		case <-s.ctx.Done():
+			timer.Stop()
+		case <-timer.C:
 		}
-	})
+		backoff *= 2
+		if backoff > s.driver.config.Valkey.ReconnectMax {
+			backoff = s.driver.config.Valkey.ReconnectMax
+		}
+	}
 	close(s.inbound)
 	<-workerDone
-	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, valkey.ErrClosing) {
-		s.report(shared.Classify("subscribe", err))
-	}
+	s.errorsMu.Lock()
+	s.errorsEnd = true
 	close(s.errors)
+	s.errorsMu.Unlock()
 	s.driver.removeSubscription(s)
 	close(s.done)
 }
