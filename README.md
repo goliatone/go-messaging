@@ -9,6 +9,7 @@ Transport-neutral messaging contracts and independently versioned transport modu
 | `github.com/goliatone/go-messaging` | Contracts, envelopes, routes, ingress, and reply correlation |
 | `github.com/goliatone/go-messaging/transport/valkey` | Valkey Pub/Sub and Streams drivers |
 | `github.com/goliatone/go-messaging/adapters/go-command` | Optional typed bridge for `go-command` v0.23.1+ |
+| `github.com/goliatone/go-messaging/adapters/go-admin` | Optional go-admin Command Runs bridge and Valkey Pub/Sub assembly |
 
 Install only the modules used by the application:
 
@@ -16,6 +17,7 @@ Install only the modules used by the application:
 go get github.com/goliatone/go-messaging@latest
 go get github.com/goliatone/go-messaging/transport/valkey@latest
 go get github.com/goliatone/go-messaging/adapters/go-command@latest
+go get github.com/goliatone/go-messaging/adapters/go-admin@latest
 ```
 
 ## Basic publisher
@@ -91,6 +93,15 @@ nested module, so its UI and transport dependencies do not enter the root module
 ## go-command integration
 
 The optional adapter supports local-only, publisher, worker, hybrid placement, explicitly authorized event-to-command triggers, and correlated command/query replies. See [the go-command adapter guide](docs/GUIDE_GO_COMMAND_ADAPTER.md) for assembly examples and safety rules.
+
+## go-admin Command Runs integration
+
+The separately versioned [go-admin adapter](adapters/go-admin/README.md) maps
+the go-admin command-run contract to strict messaging envelopes. Its optional
+Valkey package assembles publisher-only workers, subscriber-only web gateways,
+and hybrid processes on one application/environment Pub/Sub channel. Every web
+gateway owns an independent subscription; scope validation remains mandatory,
+driver lifecycle remains host-owned, and Pub/Sub provides no replay.
 
 ## Development and releases
 
