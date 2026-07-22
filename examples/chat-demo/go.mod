@@ -1,10 +1,10 @@
 module github.com/goliatone/go-messaging/examples/chat-demo
 
-go 1.26.0
+go 1.26.5
 
 require (
-	github.com/goliatone/go-messaging v0.0.0-20260717054047-0bb0a9faa369
-	github.com/goliatone/go-messaging/transport/valkey v0.0.0-20260717054047-0bb0a9faa369
+	github.com/goliatone/go-messaging v0.2.0
+	github.com/goliatone/go-messaging/transport/valkey v0.2.0
 	github.com/goliatone/go-router v0.59.0
 	github.com/gorilla/websocket v1.5.1
 	github.com/valkey-io/valkey-go v1.0.65
@@ -26,7 +26,8 @@ require (
 	github.com/gofiber/template/django/v3 v3.1.13 // indirect
 	github.com/gofiber/utils v1.2.0 // indirect
 	github.com/goliatone/go-composite-fs v0.3.0 // indirect
-	github.com/goliatone/go-errors v0.11.0 // indirect
+	github.com/goliatone/go-errors v0.12.0 // indirect
+	github.com/goliatone/go-masker v0.2.0 // indirect
 	github.com/goodsign/monday v1.0.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/julienschmidt/httprouter v1.3.0 // indirect
@@ -37,6 +38,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/savsgio/gotils v0.0.0-20240303185622-093b76447511 // indirect
+	github.com/showa-93/go-mask v0.6.2 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
@@ -48,9 +50,3 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-exclude github.com/goliatone/go-messaging v0.0.0
-
-replace github.com/goliatone/go-messaging => ../..
-
-replace github.com/goliatone/go-messaging/transport/valkey => ../../transport/valkey

@@ -1,2 +1,5 @@
 github.com/goliatone/go-admin v0.121.2/go.mod h1:9wqzbKC2JAGIqXA6F8Xi7B6m35zixryamgdwmg/mdeo=
-github.com/goliatone/go-messaging v0.1.0/go.mod h1:DS9oxHOrZVRiH6M+iO6ZeDqAUFEJu76aExEsKwAzcKo=
+github.com/goliatone/go-messaging v0.2.0 h1:04Evcy0BUp5mXKzRBmZqDlrcH4EMpAqlNz/KTVuLuwE=
+github.com/goliatone/go-messaging v0.2.0/go.mod h1:u/N5vVZpV+v3E5TJ8zYBhlpnbvjZhWBTd6aqfUCjYzk=
+github.com/goliatone/go-messaging/transport/valkey v0.2.0 h1:2W9mKef30fLIAHEihQDgCDNZWEsCst+0OSK47A5AFMI=
+github.com/goliatone/go-messaging/transport/valkey v0.2.0/go.mod h1:7hDMe94pIDqk/r/M9niqqgaVHY3T8ElEG2k45JKCOV4=
