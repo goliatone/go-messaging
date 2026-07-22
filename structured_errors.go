@@ -213,8 +213,17 @@ func ErrorSlogAttributes(err error) []slog.Attr {
 	safe.Location = nil
 	safe.RequestID = ""
 	safe.ValidationErrors = nil
-	safe.Metadata = safeStructuredMetadata(safe.Metadata)
-	return gerrors.ToSlogAttributes(safe)
+	metadata := safeStructuredMetadata(safe.Metadata)
+	// Render the package-owned allowlist ourselves. go-errors v0.12 and later
+	// deliberately omit metadata from the default secure slog renderer, while
+	// older versions included the whole map. Clearing it before delegation keeps
+	// the result safe and makes this public helper stable across both behaviors.
+	safe.Metadata = nil
+	attrs := gerrors.ToSlogAttributes(safe)
+	if len(metadata) > 0 {
+		attrs = append(attrs, slog.Any("metadata", metadata))
+	}
+	return attrs
 }
 
 func structuredPolicyFor(err error) (structuredErrorPolicy, map[string]any) {
