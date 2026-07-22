@@ -1,10 +1,23 @@
 # Changelog
 
+# [0.3.0](https://github.com/goliatone/go-messaging/compare/v0.2.0...v0.3.0) - (2026-07-22)
+
+## <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update deps ([c69c0e1](https://github.com/goliatone/go-messaging/commit/c69c0e14f858a5ae35b62f59c117fea455c6009f))  - (goliatone)
+
 # [0.2.0](https://github.com/goliatone/go-messaging/compare/v0.1.0...v0.2.0) - (2026-07-22)
+
+
+New minor release: v0.2.0
 
 ## <!-- 1 -->🐛 Bug Fixes
 
 - Preserve structured log handler ([9d0e79e](https://github.com/goliatone/go-messaging/commit/9d0e79edb6ae33dd5caf52950f2fbfeaa8b3f650))  - (goliatone)
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.2.0 ([4130aa3](https://github.com/goliatone/go-messaging/commit/4130aa33f45acefa06f9698b193a00a32d16a1c5))  - (goliatone)
 
 ## <!-- 16 -->➕ Add
 
