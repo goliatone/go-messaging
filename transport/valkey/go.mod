@@ -12,6 +12,6 @@ require (
 require (
 	github.com/go-ozzo/ozzo-validation/v4 v4.3.0 // indirect
 	github.com/goliatone/go-errors v0.12.0 // indirect
-	github.com/goliatone/go-messaging v0.3.1
+	github.com/goliatone/go-messaging v0.3.2
 	golang.org/x/sys v0.31.0 // indirect
 )
