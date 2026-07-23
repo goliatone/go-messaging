@@ -3,9 +3,9 @@ module github.com/goliatone/go-messaging/adapters/go-admin
 go 1.26.5
 
 require (
-	github.com/goliatone/go-admin v0.121.3
-	github.com/goliatone/go-messaging v0.3.0
-	github.com/goliatone/go-messaging/transport/valkey v0.3.0
+	github.com/goliatone/go-admin v0.121.6
+	github.com/goliatone/go-messaging v0.3.1
+	github.com/goliatone/go-messaging/transport/valkey v0.3.1
 )
 
 require (
@@ -74,7 +74,7 @@ require (
 	github.com/goliatone/go-print v0.4.1 // indirect
 	github.com/goliatone/go-repository-bun v0.16.1 // indirect
 	github.com/goliatone/go-repository-cache v0.7.1 // indirect
-	github.com/goliatone/go-router v0.60.2 // indirect
+	github.com/goliatone/go-router v0.61.0 // indirect
 	github.com/goliatone/go-search v0.14.5 // indirect
 	github.com/goliatone/go-search/adapters/goadmin v0.14.5 // indirect
 	github.com/goliatone/go-slug v0.1.0 // indirect

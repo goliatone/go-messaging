@@ -3,9 +3,9 @@ module github.com/goliatone/go-messaging/examples/chat-demo
 go 1.26.5
 
 require (
-	github.com/goliatone/go-messaging v0.2.0
-	github.com/goliatone/go-messaging/transport/valkey v0.2.0
-	github.com/goliatone/go-router v0.59.0
+	github.com/goliatone/go-messaging v0.3.1
+	github.com/goliatone/go-messaging/transport/valkey v0.3.1
+	github.com/goliatone/go-router v0.61.1
 	github.com/gorilla/websocket v1.5.1
 	github.com/valkey-io/valkey-go v1.0.65
 )

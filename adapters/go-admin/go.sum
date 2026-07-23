@@ -141,8 +141,8 @@ github.com/gofiber/utils v1.2.0/go.mod h1:poZpsnhBykfnY1Mc0KeEa6mSHrS3dV0+oBWyeQ
 github.com/golang-jwt/jwt/v5 v5.3.1 h1:kYf81DTWFe7t+1VvL7eS+jKFVWaUnK9cB1qbwn63YCY=
 github.com/golang-jwt/jwt/v5 v5.3.1/go.mod h1:fxCRLWMO43lRc8nhHWY6LGqRcf+1gQWArsqaEUEa5bE=
 github.com/golang/mock v1.6.0/go.mod h1:p6yTPP+5HYm5mzsMV8JkE6ZKdX+/wYM6Hr+LicevLPs=
-github.com/goliatone/go-admin v0.121.3 h1:7pG84+j33p2s0LebWGatVWPt9TOP1ZE85TrmcUuUBYU=
-github.com/goliatone/go-admin v0.121.3/go.mod h1:XPKWYxb1frgCRaAmWqURijCndFbVE7YpBMZLcZi8RCc=
+github.com/goliatone/go-admin v0.121.6 h1:phktk7a74Wz7AbYWGFNH6GGxjSg9NQn1W5z1daNllz0=
+github.com/goliatone/go-admin v0.121.6/go.mod h1:1MhdoTdXKH3BMmHxQ0VTD8oTccH0ws7iZET4khaMtrM=
 github.com/goliatone/go-auth v0.44.1 h1:Nd/uAzy6u4UIHtwLihkuJEoXp2DtAWuZUgpPj2eJtd0=
 github.com/goliatone/go-auth v0.44.1/go.mod h1:vQOO+vdapLrhqxuENqkQxPfXNMDFOAnmVaOiQ4/Afq8=
 github.com/goliatone/go-auth/adapters/featuregate v0.44.1 h1:bHTfCSJ5N0wBY0qJKEBAkG0E30WaDYlZI2FYJNrF1n4=
@@ -175,10 +175,10 @@ github.com/goliatone/go-logger v0.9.0 h1:fnxp9Q438JX/CLU4/6a2IDLCvPdcNDguC4tbUS9
 github.com/goliatone/go-logger v0.9.0/go.mod h1:hWv7Tj+af3E0vjJIHR52JmmK3jKk6rCKFtvhCC/3jXE=
 github.com/goliatone/go-masker v0.2.0 h1:M+Xx+AVJqTpNCQNPrPgVL6ft7oao5oT+/jQ+G8XCYVg=
 github.com/goliatone/go-masker v0.2.0/go.mod h1:n+AV93IO1rNI35kjbjfV1gMkjuIOSDVEzfhABTlCf4U=
-github.com/goliatone/go-messaging v0.3.0 h1:sOWZzsDUm61BLO/VxJ8kk0kSZS47b6BL4Vc8fUC4/8c=
-github.com/goliatone/go-messaging v0.3.0/go.mod h1:lO6qqAZDJ29SS+3xDuwyt70sQDl1ExkxelLnz9cJn54=
-github.com/goliatone/go-messaging/transport/valkey v0.3.0 h1:Y1xrvJFvM98b/EUgBfG+J8Ttl+LjHzXbufEDhY4tZHo=
-github.com/goliatone/go-messaging/transport/valkey v0.3.0/go.mod h1:YMIToKQXQRpfx4Otk/w5m0JVwJDm5JA53lxq0i5SsPk=
+github.com/goliatone/go-messaging v0.3.1 h1:CSPgjvEHU0dxu3CuwXZXAQ0y0KH1eo8dWXtTfpZ7Sus=
+github.com/goliatone/go-messaging v0.3.1/go.mod h1:lO6qqAZDJ29SS+3xDuwyt70sQDl1ExkxelLnz9cJn54=
+github.com/goliatone/go-messaging/transport/valkey v0.3.1 h1:ccnbGRMzymErdldPxYNBWRtgtvGfk3m976p4wwplccc=
+github.com/goliatone/go-messaging/transport/valkey v0.3.1/go.mod h1:yfTpiQKzGSE+U9qcLmmSw5ohlRanFq+CIzlv6+s2Y+4=
 github.com/goliatone/go-notifications v0.14.0 h1:csMzXqUb/GhZXkOngGLV5NxFqBk0KI5xDDVqmDOlrO0=
 github.com/goliatone/go-notifications v0.14.0/go.mod h1:eztJLbQ3nc1DnBX6A3b9UUgh+jCXA5mpT5mcq4nXIw8=
 github.com/goliatone/go-options v0.7.2 h1:sQJ3CvqarraGflRkkL1ve+/3qdDbehmKYgkcdJrb6+U=
@@ -191,8 +191,8 @@ github.com/goliatone/go-repository-bun v0.16.1 h1:nTYn+MwwvhX4o2MuBYiM8aDYpO++2X
 github.com/goliatone/go-repository-bun v0.16.1/go.mod h1:bOFyQOGKyPJX+tkd7A7DhASqcPMvwdhDq41AmWujFqs=
 github.com/goliatone/go-repository-cache v0.7.1 h1:/JHBAWnBDiz9Gz1ko3XZMmq5ZuOOHRdedMZfoBCVWk8=
 github.com/goliatone/go-repository-cache v0.7.1/go.mod h1:vv+5iv/FjDBoasIzy8Tb0t/lpswK1W6+l3piar4+w1o=
-github.com/goliatone/go-router v0.60.2 h1:jBYkSyEb3LwUtyppiUgSNyH+RdFiR/HOtOsCW7ExT3w=
-github.com/goliatone/go-router v0.60.2/go.mod h1:lMzEwDQuYb6uslec25zbrr/oCJhfFhCDgdHMT6Dw5Dg=
+github.com/goliatone/go-router v0.61.0 h1:KegpiSavKpLaQM7x7rH+IueyCH+Yq9IT9gPcfoj1vZE=
+github.com/goliatone/go-router v0.61.0/go.mod h1:lMzEwDQuYb6uslec25zbrr/oCJhfFhCDgdHMT6Dw5Dg=
 github.com/goliatone/go-search v0.14.5 h1:rTI9QcaEpAFiG+u20Mwc+CoeU3S9KcKUg5sxlDpNXcg=
 github.com/goliatone/go-search v0.14.5/go.mod h1:MhNvJD7TjSbwbPOP7zq08mODM62V9tYFsCcE+MO3Qms=
 github.com/goliatone/go-search/adapters/goadmin v0.14.5 h1:Rvihq31AI31p+3GxDRTAkZSawoX6Pr3be/qFPP9inTs=
