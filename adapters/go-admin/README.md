@@ -140,7 +140,6 @@ GOADMIN_VALKEY_DOCKER_TEST=1 GOWORK=off go test ./valkey -run DockerValkey
 ```
 
 Release the go-admin contract version before publishing an adapter version that
-requires it; do not ship local `replace` directives. The current adapter source
-requires the command-run facade and `admin/commandruntest`, which are newer than
-go-admin `v0.121.2`; that version therefore cannot be the final compatibility
-floor.
+requires it; do not ship local `replace` directives. The adapter requires
+go-admin `v0.121.6` or newer, the first released compatibility floor containing
+the command-run facade and `admin/commandruntest`.
