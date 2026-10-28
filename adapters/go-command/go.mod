@@ -3,7 +3,7 @@ module github.com/goliatone/go-messaging/adapters/go-command
 go 1.26.5
 
 require (
-	github.com/goliatone/go-command v0.24.1
+	github.com/goliatone/go-command v0.24.3
 	github.com/goliatone/go-errors v0.12.0
 )
 
