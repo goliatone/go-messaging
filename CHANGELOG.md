@@ -1,6 +1,20 @@
 # Changelog
 
+# [0.3.3](https://github.com/goliatone/go-messaging/compare/v0.3.2...v0.3.3) - (2026-10-28)
+
+## <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update deps ([71b9ecb](https://github.com/goliatone/go-messaging/commit/71b9ecb1e03e5f0d99ed08e9d573a0f9bedb3464))  - (goliatone)
+- Update docs ([c9d39c7](https://github.com/goliatone/go-messaging/commit/c9d39c79ebb98f6469b73ee65b11184f9c89aa4a))  - (goliatone)
+
 # [0.3.2](https://github.com/goliatone/go-messaging/compare/v0.3.1...v0.3.2) - (2026-07-23)
+
+
+New patch release: v0.3.2
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.3.2 ([547f6dd](https://github.com/goliatone/go-messaging/commit/547f6dd37a023e6fb8515881aa7228b68f19783a))  - (goliatone)
 
 ## <!-- 7 -->⚙️ Miscellaneous Tasks
 
