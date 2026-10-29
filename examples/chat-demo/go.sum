@@ -56,10 +56,10 @@ github.com/goliatone/go-errors v0.12.0 h1:FI3FHJe+sogfD+MZJqx8OVGDJqav5PNq1xi1UA
 github.com/goliatone/go-errors v0.12.0/go.mod h1:LvR8nteHvrUTbS6N7Gm/2of9yRyyLoxIB4VFPk+wkVU=
 github.com/goliatone/go-masker v0.2.0 h1:M+Xx+AVJqTpNCQNPrPgVL6ft7oao5oT+/jQ+G8XCYVg=
 github.com/goliatone/go-masker v0.2.0/go.mod h1:n+AV93IO1rNI35kjbjfV1gMkjuIOSDVEzfhABTlCf4U=
-github.com/goliatone/go-messaging v0.3.3 h1:zTKN1SCnMtpOpPoOaQEERTH+3r3Q2N3GfO4U6rJpkPM=
-github.com/goliatone/go-messaging v0.3.3/go.mod h1:lO6qqAZDJ29SS+3xDuwyt70sQDl1ExkxelLnz9cJn54=
-github.com/goliatone/go-messaging/transport/valkey v0.3.3 h1:jOZPf9HEp0r5g08A/ODppHh81GucPLAcLrQ58atSiGk=
-github.com/goliatone/go-messaging/transport/valkey v0.3.3/go.mod h1:Mnc6KYJILfyxQbMnLRabRJ2sNHpPWV6dfCqraI8bdsM=
+github.com/goliatone/go-messaging v0.3.4 h1:aZJ8YnO8XexUjZki/9DAX1l4kiMEGQb/cjvBre4Ar/Y=
+github.com/goliatone/go-messaging v0.3.4/go.mod h1:lO6qqAZDJ29SS+3xDuwyt70sQDl1ExkxelLnz9cJn54=
+github.com/goliatone/go-messaging/transport/valkey v0.3.4 h1:gHb4g0d6xJFaIaXqGB5FAMWWhi961+RZCTKacY0QpBU=
+github.com/goliatone/go-messaging/transport/valkey v0.3.4/go.mod h1:t5gQg/FSkG71ahVFz4DBvUPvTZRlLn0N5CX6KpuuI2c=
 github.com/goliatone/go-router v0.63.3 h1:nvny/OdTofhymMmWUbJT19unbAPj/H+hj+MNYsbpomQ=
 github.com/goliatone/go-router v0.63.3/go.mod h1:7jFF8yLINw/i9Yh+8hL5594D1dESSxRkMIw6Ho7zLmE=
 github.com/goodsign/monday v1.0.2 h1:k8kRMkCRVfCTWOU4dRfRgneQsWlB1+mJd3MxG0lGLzQ=

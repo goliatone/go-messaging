@@ -4,8 +4,8 @@ go 1.26.5
 
 require (
 	github.com/goliatone/go-admin v0.142.1
-	github.com/goliatone/go-messaging v0.3.3
-	github.com/goliatone/go-messaging/transport/valkey v0.3.3
+	github.com/goliatone/go-messaging v0.3.4
+	github.com/goliatone/go-messaging/transport/valkey v0.3.4
 )
 
 require (
