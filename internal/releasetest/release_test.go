@@ -26,13 +26,17 @@ func TestReleaseDryRunPlansPresentModulesWithoutMutation(t *testing.T) {
 		t.Fatalf("release dry run failed: %v\n%s", err, output)
 	}
 
+	commandVersion, ok := moduleRequirementVersion(string(before["adapters/go-command/go.mod"]), "github.com/goliatone/go-command")
+	if !ok {
+		t.Fatal("go-command adapter requirement is missing")
+	}
 	wantLines := []string{
 		"release-tag: v0.99.0",
 		"root-requirement: transport/valkey github.com/goliatone/go-messaging@v0.99.0",
 		"removed-replacement: transport/valkey github.com/goliatone/go-messaging",
 		"root-requirement: adapters/go-command github.com/goliatone/go-messaging@v0.99.0",
 		"removed-replacement: adapters/go-command github.com/goliatone/go-messaging",
-		"preserved-requirement: adapters/go-command github.com/goliatone/go-command@v0.24.1",
+		"preserved-requirement: adapters/go-command github.com/goliatone/go-command@" + commandVersion,
 		"module-tag: transport/valkey/v0.99.0",
 		"module-tag: adapters/go-command/v0.99.0",
 		"atomic-push-ref: HEAD:main",
