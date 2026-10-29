@@ -1,6 +1,19 @@
 # Changelog
 
+# [0.3.4](https://github.com/goliatone/go-messaging/compare/v0.3.3...v0.3.4) - (2026-10-29)
+
+## <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Code quality ([a597265](https://github.com/goliatone/go-messaging/commit/a59726512be61256b25bab386439bd730d4001e2))  - (goliatone)
+
 # [0.3.3](https://github.com/goliatone/go-messaging/compare/v0.3.2...v0.3.3) - (2026-10-28)
+
+
+New patch release: v0.3.3
+
+## <!-- 13 -->📦 Bumps
+
+- Bump version: v0.3.3 ([9743c71](https://github.com/goliatone/go-messaging/commit/9743c714dc8d661b7d9692c5327414d128c8be3f))  - (goliatone)
 
 ## <!-- 7 -->⚙️ Miscellaneous Tasks
 
